@@ -32,9 +32,18 @@ void dieif(int test, const char *fmt, ...) {
 }
 
 static const char *const usage =
-    "usage: odb [sub-command] [options] [arguments]";
+    "usage: odb [command] [options] [arguments...]";
+
+static const char *const cmdstr =
+    "  encode             Encode data to ODB format\n"
+    "  decode             Decone data from ODB format\n"
+    "  help <command>     Print help for <command>\n"
+    "  help               Print general help message\n"
+;
+
 static const char *const optstr =
-    " -h --help               Print this message\n";
+    " -h --help           Print this message\n"
+;
 
 void parse_opts(int *argcp, char ***argvp) {
     static char* shortopts = "h";
@@ -46,18 +55,49 @@ void parse_opts(int *argcp, char ***argvp) {
     while ((c = getopt_long(*argcp,*argvp,shortopts,longopts,0)) != -1) {
         switch(c) {
         case 'h':
-            printf("%s\n%s", usage, optstr);
+            printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
             exit(0);
         case '?':
             die("valid options:\n%s", optstr);
         default:
-            die("odb: unhandled option -- %c\n", c);
+            die("unhandled option -- %c\n", c);
         }
     }
     *argvp += optind;
     *argcp -= optind;
 }
 
+typedef enum {
+    INVALID = 0,
+    ENCODE,
+    DECODE,
+    HELP
+} cmd_t;
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
+    dieif(argc < 1, "usage: %s\n", usage);
+
+    cmd_t cmd =
+        !strcmp(argv[0], "encode") ? ENCODE :
+        !strcmp(argv[0], "decode") ? DECODE :
+        !strcmp(argv[0], "help")   ? HELP   :
+        INVALID;
+    argv++; argc--;
+
+    switch (cmd) {
+    case ENCODE:
+        warn("encoding...\n");
+        return 0;
+    case DECODE:
+        warn("decoding...\n");
+        return 0;
+    case HELP:
+        printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
+        return 0;
+    default:
+        die("invalid command: %s\n", argv[-1]);
+    }
+
+    die("end of main reached\n");
 }
