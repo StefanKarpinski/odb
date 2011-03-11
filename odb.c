@@ -67,8 +67,9 @@ void parse_opts(int *argcp, char ***argvp) {
     *argcp -= optind;
 }
 
+const int INVALID = -1;
+
 typedef enum {
-    INVALID = 0,
     ENCODE,
     DECODE,
     HELP
@@ -81,15 +82,24 @@ typedef enum {
 } field_type_t;
 
 typedef struct {
-    char name[246];
-    field_type_t *type;
-    unsigned int size;
-} field_spec_t;
+    field_type_t type;
+    char name[256-sizeof(field_type_t)];
+} __attribute__ ((__packed__)) field_spec_t;
 
-field_spec_t parse_field_spec(char *str) {
-    field_spec_t field_spec;
-    warn("field: %s\n", str);
-    return field_spec;
+field_spec_t parse_field_spec(const char *const str) {
+    field_spec_t spec;
+    bzero(&spec, sizeof(spec));
+    char *colon = strchr(str, ':');
+    dieif(!colon, "invalid field spec: %s\n", str);
+    int n = colon++ - str;
+    dieif(n >= sizeof(spec.name), "field name too long: %s\n", str);
+    memcpy(spec.name, str, n);
+    spec.type = !strcmp(colon, "int")    ? INTEGER :
+                !strcmp(colon, "float")  ? FLOAT   :
+                !strcmp(colon, "string") ? STRING  :
+                                           INVALID ;
+    dieif(spec.type == INVALID, "invalid field type: %s\n", colon);
+    return spec;
 }
 
 int main(int argc, char **argv) {
@@ -97,10 +107,10 @@ int main(int argc, char **argv) {
     dieif(argc < 1, "usage: %s\n", usage);
 
     cmd_t cmd =
-        !strcmp(argv[0], "encode") ? ENCODE :
-        !strcmp(argv[0], "decode") ? DECODE :
-        !strcmp(argv[0], "help")   ? HELP   :
-        INVALID;
+        !strcmp(argv[0], "encode") ? ENCODE  :
+        !strcmp(argv[0], "decode") ? DECODE  :
+        !strcmp(argv[0], "help")   ? HELP    :
+                                     INVALID ;
     argv++; argc--;
 
     switch (cmd) {
