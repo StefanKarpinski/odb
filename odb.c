@@ -255,6 +255,33 @@ int main(int argc, char **argv) {
 
                 for (int j = 0; j < n; j++)
                     printf("%20s%c", specs[j].name, j < n-1 ? ' ' : '\n');
+                for (int j = 0; j < 21*n; j++)
+                    printf("-");
+                printf("\n");
+
+                struct stat fs;
+                dieif(fstat(fileno(file),&fs), "stat error for %s: %s\n", file, errstr);
+
+                while (ftell(file) < fs.st_size) {
+                    for (int j = 0; j < n; j++) {
+                        switch (specs[j].type) {
+                            case INTEGER: {
+                                long long v;
+                                fread1(&v, sizeof(v), file);
+                                printf("%20lld%c", v, j < n-1 ? ' ' : '\n');
+                                break;
+                            }
+                            case FLOAT: {
+                                double v;
+                                fread1(&v, sizeof(v), file);
+                                printf("%20.6f%c", v, j < n-1 ? ' ' : '\n');
+                                break;
+                            }
+                            default:
+                                die("decoding type %s not yet implemented\n", typestr(specs[j].type));
+                        }
+                    }
+                }
             }
 
             return 0;
