@@ -40,18 +40,21 @@ static const char *const usage =
     "usage: odb [command] [options] [arguments...]";
 
 static const char *const cmdstr =
-    "  encode             Encode data to ODB format\n"
-    "  decode             Decone data from ODB format\n"
-    "  help <command>     Print help for <command>\n"
-    "  help               Print general help message\n"
+    "  encode               Encode data to ODB format\n"
+    "  decode               Decode data from ODB format\n"
+    "  help                 Print this message\n"
 ;
 
 static const char *const optstr =
-    " -h --help           Print this message\n"
+    " -e --float-format-e   Use %e to print floats\n"
+    " -g --float-format-g   Use %g to print floats\n"
+    " -h --help             Print this message\n"
 ;
 
+static char *float_format = "%20.6f%c";
+
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "+h";
+    static char* shortopts = "+egh";
     static struct option longopts[] = {
         { "help", no_argument, 0, 'h' },
         { 0, 0, 0, 0 }
@@ -59,11 +62,17 @@ void parse_opts(int *argcp, char ***argvp) {
     int c;
     while ((c = getopt_long(*argcp, *argvp, shortopts, longopts, 0)) != -1) {
         switch(c) {
+            case 'e':
+                float_format = "%20.6e%c";
+                break;
+            case 'g':
+                float_format = "%20.6g%c";
+                break;
             case 'h':
                 printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
                 exit(0);
             case '?':
-                die("valid options:\n%s", optstr);
+                die("\noptions:\n%s\n", optstr);
             default:
                 die("unhandled option -- %c\n", c);
         }
@@ -298,7 +307,7 @@ int main(int argc, char **argv) {
                             case FLOAT: {
                                 double v;
                                 fread1(&v, sizeof(v), file);
-                                printf("%20.6f%c", v, j < n-1 ? ' ' : '\n');
+                                printf(float_format, v, j < n-1 ? ' ' : '\n');
                                 break;
                             }
                             default:
