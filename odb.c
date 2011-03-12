@@ -232,14 +232,17 @@ size_t header_size(header_t h) {
 }
 
 static header_t h;
+int sort_n, *sort_order;
 
 #define data(j,k) data[(j)*h.field_count+(k)]
 
 int lt_records(void *d, size_t a, size_t b) {
     long long *data = (long long*) d;
-    for (int i = 0; i < h.field_count; i++)
-        if (data(a,i) != data(b,i))
-            return data(a,i) < data(b,i) ? 1 : 0;
+    for (int i = 0; i < sort_n; i++) {
+        int j = sort_order[i];
+        if (data(a,j) != data(b,j))
+            return data(a,j) < data(b,j) ? 1 : 0;
+    }
     return 0;
 }
 
@@ -372,6 +375,18 @@ int main(int argc, char **argv) {
             return 0;
         }
         case SORT: {
+            int n;
+            sort_order = malloc(argc*sizeof(int));
+            for (n = 0; n < argc; n++) {
+                if (!strcmp(argv[n], "--")) {
+                    sort_order = realloc(sort_order, n++);
+                    break;
+                }
+                sort_order[n] = atoi(argv[n]);
+            }
+            argv += n; argc -= n;
+            sort_n = n-1;
+
             h = read_headers(argv, argc);
             size_t h_size = header_size(h);
 
