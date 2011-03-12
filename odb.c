@@ -240,32 +240,48 @@ int main(int argc, char **argv) {
             return 0;
         }
         case DECODE: {
-            long long last_n;
-            field_spec_t *last_specs;
-            char *buffer = malloc(sizeof(preamble_t));
+            long long n;
+            field_spec_t *specs;
+            char *preamble_b = malloc(sizeof(preamble_t));
 
             for (int i = 0; i < argc; i++) {
                 FILE *file = fopen(argv[i], "r");
                 dieif(!file, "error opening %s: %s\n", argv[i], errstr);
 
-                fread1(buffer, sizeof(preamble_t), file);
-                dieif(memcmp(buffer, &preamble, sizeof(preamble_t)), "invalid odb file: %s\n", argv[i]);
+                fread1(preamble_b, sizeof(preamble_t), file);
+                dieif(memcmp(preamble_b, &preamble, sizeof(preamble_t)),
+                      "invalid odb file: %s\n", argv[i]);
 
-                long long n;
-                fread1(&n, sizeof(n), file);
-                dieif(i && n != last_n, "field count mismatch: %s\n", argv[i]);
-                field_spec_t *specs = malloc(n*sizeof(field_spec_t));
-                freadn(specs, sizeof(field_spec_t), n, file);
-                dieif(i && memcmp(specs,last_specs,n*sizeof(field_spec_t)),
-                      "field type mismatch: %s\n", argv[i]);
-                last_n = n;
-                last_specs = specs;
+                long long n_i;
+                fread1(&n_i, sizeof(n_i), file);
+                field_spec_t *specs_i = malloc(n_i*sizeof(field_spec_t));
+                freadn(specs_i, sizeof(field_spec_t), n_i, file);
+                if (!i) {
+                    n = n_i;
+                    specs = specs_i;
+                } else {
+                    dieif(n_i != n || memcmp(specs_i, specs, n*sizeof(field_spec_t)),
+                          "field spec mismatch: %s\n", argv[i]);
+                    free(specs_i);
+                }
 
-                for (int j = 0; j < n; j++)
-                    printf("%20s%c", specs[j].name, j < n-1 ? ' ' : '\n');
-                for (int j = 0; j < 21*n; j++)
-                    printf("-");
-                printf("\n");
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+            }
+            free(preamble_b);
+
+            for (int j = 0; j < n; j++)
+                printf("%20s%c", specs[j].name, j < n-1 ? ' ' : '\n');
+            for (int j = 0; j < 21*n; j++)
+                printf("-");
+            printf("\n");
+
+            int header_size = sizeof(preamble_t) + sizeof(n) + n*sizeof(field_spec_t);
+
+            for (int i = 0; i < argc; i++) {
+                FILE *file = fopen(argv[i], "r");
+                dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+                dieif(fseek(file, header_size, SEEK_SET),
+                      "seek error for %s: %s\n", argv[i], errstr);
 
                 struct stat fs;
                 dieif(fstat(fileno(file),&fs), "stat error for %s: %s\n", file, errstr);
@@ -290,6 +306,8 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
+
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
 
             return 0;
