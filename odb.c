@@ -86,6 +86,7 @@ const int INVALID = -1;
 typedef enum {
     ENCODE,
     DECODE,
+    SORT,
     HELP
 } cmd_t;
 
@@ -175,20 +176,70 @@ void fread1(void *restrict ptr, size_t size, FILE *restrict stream) {
     freadn(ptr, size, 1, stream);
 }
 
+typedef struct {
+    long long field_count;
+    field_spec_t *field_specs;
+} header_t;
+
+void write_header(FILE *file, long long n, field_spec_t *specs) {
+    fwrite1(&preamble, sizeof(preamble_t), file);
+    fwrite1(&n, sizeof(n), file);
+    fwriten(specs, sizeof(field_spec_t), n, file);
+}
+
+header_t read_header(FILE *file) {
+    char preamble_b[sizeof(preamble_t)];
+    fread1(preamble_b, sizeof(preamble_t), file);
+    dieif(memcmp(preamble_b, &preamble, sizeof(preamble_t)), "invalid odb file\n");
+
+    header_t h;
+    fread1(&h.field_count, sizeof(h.field_count), file);
+    h.field_specs = malloc(h.field_count*sizeof(field_spec_t));
+    freadn(h.field_specs, sizeof(field_spec_t), h.field_count, file);
+    return h;
+}
+
+void free_header(header_t h) { free(h.field_specs); }
+
+int check_header(FILE *file, header_t hh) {
+    header_t h = read_header(file);
+    int match = hh.field_count == h.field_count &&
+        !memcmp(hh.field_specs, h.field_specs, h.field_count*sizeof(field_spec_t));
+    free_header(h);
+    return match;
+}
+
+header_t read_headers(char **files, int n) {
+    header_t h;
+    for (int i = 0; i < n; i++) {
+        FILE *file = fopen(files[i], "r");
+        dieif(!file, "error opening %s: %s\n", files[i], errstr);
+
+        if (!i) h = read_header(file);
+        else dieif(!check_header(file,h), "field spec mismatch: %s\n", files[i]);
+
+        dieif(fclose(file), "error closing %s: %s\n", files[i], errstr);
+    }
+    return h;
+}
+
+size_t header_size(header_t h) {
+    return sizeof(preamble_t) + sizeof(h.field_count) + h.field_count*sizeof(field_spec_t);
+}
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
 
     cmd_t cmd = !strcmp(argv[0], "encode") ? ENCODE  :
                 !strcmp(argv[0], "decode") ? DECODE  :
+                !strcmp(argv[0], "sort")   ? SORT    :
                 !strcmp(argv[0], "help")   ? HELP    :
                                              INVALID ;
     argv++; argc--;
 
     switch (cmd) {
         case ENCODE: {
-            fwrite1(&preamble, sizeof(preamble_t), stdout);
-
             long long n;
             field_spec_t *specs = malloc(argc*sizeof(field_spec_t));
             for (n = 0; n < argc; n++) {
@@ -200,8 +251,7 @@ int main(int argc, char **argv) {
             }
             argv += n; argc -= n; n--;
 
-            fwrite1(&n, sizeof(n), stdout);
-            fwriten(specs, sizeof(field_spec_t), n, stdout);
+            write_header(stdout, n, specs);
 
             for (int i = 0; i < argc; i++) {
                 FILE *file = fopen(argv[i], "r");
@@ -249,72 +299,76 @@ int main(int argc, char **argv) {
             return 0;
         }
         case DECODE: {
-            long long n;
-            field_spec_t *specs;
-            char *preamble_b = malloc(sizeof(preamble_t));
+            header_t h = read_headers(argv, argc);
 
-            for (int i = 0; i < argc; i++) {
-                FILE *file = fopen(argv[i], "r");
-                dieif(!file, "error opening %s: %s\n", argv[i], errstr);
-
-                fread1(preamble_b, sizeof(preamble_t), file);
-                dieif(memcmp(preamble_b, &preamble, sizeof(preamble_t)),
-                      "invalid odb file: %s\n", argv[i]);
-
-                long long n_i;
-                fread1(&n_i, sizeof(n_i), file);
-                field_spec_t *specs_i = malloc(n_i*sizeof(field_spec_t));
-                freadn(specs_i, sizeof(field_spec_t), n_i, file);
-                if (!i) {
-                    n = n_i;
-                    specs = specs_i;
-                } else {
-                    dieif(n_i != n || memcmp(specs_i, specs, n*sizeof(field_spec_t)),
-                          "field spec mismatch: %s\n", argv[i]);
-                    free(specs_i);
-                }
-
-                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
-            }
-            free(preamble_b);
-
-            for (int j = 0; j < n; j++)
-                printf("%20s%c", specs[j].name, j < n-1 ? ' ' : '\n');
-            for (int j = 0; j < 21*n; j++)
+            for (int j = 0; j < h.field_count; j++)
+                printf("%20s%c", h.field_specs[j].name, j < h.field_count-1 ? ' ' : '\n');
+            for (int j = 0; j < 21*h.field_count; j++)
                 printf("-");
             printf("\n");
 
-            int header_size = sizeof(preamble_t) + sizeof(n) + n*sizeof(field_spec_t);
+            int h_size = header_size(h);
 
             for (int i = 0; i < argc; i++) {
                 FILE *file = fopen(argv[i], "r");
                 dieif(!file, "error opening %s: %s\n", argv[i], errstr);
-                dieif(fseek(file, header_size, SEEK_SET),
+                dieif(fseek(file, h_size, SEEK_SET),
                       "seek error for %s: %s\n", argv[i], errstr);
 
                 struct stat fs;
                 dieif(fstat(fileno(file),&fs), "stat error for %s: %s\n", file, errstr);
 
                 while (ftell(file) < fs.st_size) {
-                    for (int j = 0; j < n; j++) {
-                        switch (specs[j].type) {
+                    for (int j = 0; j < h.field_count; j++) {
+                        switch (h.field_specs[j].type) {
                             case INTEGER: {
                                 long long v;
                                 fread1(&v, sizeof(v), file);
-                                printf("%20lld%c", v, j < n-1 ? ' ' : '\n');
+                                printf("%20lld%c", v, j < h.field_count-1 ? ' ' : '\n');
                                 break;
                             }
                             case FLOAT: {
                                 double v;
                                 fread1(&v, sizeof(v), file);
-                                printf(float_format, v, j < n-1 ? ' ' : '\n');
+                                printf(float_format, v, j < h.field_count-1 ? ' ' : '\n');
                                 break;
                             }
                             default:
-                                die("decoding type %s not yet implemented\n", typestr(specs[j].type));
+                                die("decoding type %s not yet implemented\n",
+                                    typestr(h.field_specs[j].type));
                         }
                     }
                 }
+
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+            }
+
+            return 0;
+        }
+        case SORT: {
+            header_t h = read_headers(argv, argc);
+
+            for (int i = 0; i < argc; i++) {
+                FILE *file = fopen(argv[i],"r+");
+                dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+
+                // struct stat fs;
+                // fstat(fileno(file), &fs);
+                // char *data = mmap(
+                //   0,
+                //   fs.st_size,
+                //   PROT_READ | PROT_WRITE,
+                //   MAP_SHARED,
+                //   fileno(file),
+                //   0
+                // );
+                // dieif(data == MAP_FAILED, "mmap failed for %s: %s\n", argv[i], errstr);
+                // dieif(memcmp(data, &preamble, sizeof(preamble_t)),
+                //       "invalid odb file: %s\n", argv[i]);
+                // 
+                // // su_smoothsort(packets,0,n,lt,swap_packets);
+                // 
+                // munmap(data, fs.st_size);
 
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
