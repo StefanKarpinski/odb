@@ -1,4 +1,5 @@
 /odb
+*.o
+*.dSYM
 *.tsv
 *.odb
-*.dSYM

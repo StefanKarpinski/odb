@@ -1,10 +1,12 @@
-odb: odb.c
-	gcc -g3 -std=gnu99 $< -o $@
+CFLAGS = -g3 -std=gnu99
 
-test-encode:
-	./odb encode term:int correction:int p:float -- test.tsv > test.odb
+odb: odb.c smoothsort.o
+	gcc $(CFLAGS) $^ -o $@
+
+%.o: %.c %.h
+	gcc $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf odb odb.dSYM
+	rm -rf odb odb.dSYM *.o
 
 .PHONY: clean test-encode

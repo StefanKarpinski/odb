@@ -10,6 +10,8 @@
 #include <sys/param.h>
 #include <sys/sysctl.h>
 
+#include "smoothsort.h"
+
 #define errstr strerror(errno)
 
 void warn(const char *fmt, ...) {
