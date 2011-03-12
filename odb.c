@@ -240,18 +240,26 @@ int main(int argc, char **argv) {
             return 0;
         }
         case DECODE: {
+            long long last_n;
+            field_spec_t *last_specs;
+            char *buffer = malloc(sizeof(preamble_t));
+
             for (int i = 0; i < argc; i++) {
                 FILE *file = fopen(argv[i], "r");
                 dieif(!file, "error opening %s: %s\n", argv[i], errstr);
 
-                char *buffer = malloc(sizeof(preamble_t));
                 fread1(buffer, sizeof(preamble_t), file);
                 dieif(memcmp(buffer, &preamble, sizeof(preamble_t)), "invalid odb file: %s\n", argv[i]);
 
                 long long n;
                 fread1(&n, sizeof(n), file);
+                dieif(i && n != last_n, "field count mismatch: %s\n", argv[i]);
                 field_spec_t *specs = malloc(n*sizeof(field_spec_t));
                 freadn(specs, sizeof(field_spec_t), n, file);
+                dieif(i && memcmp(specs,last_specs,n*sizeof(field_spec_t)),
+                      "field type mismatch: %s\n", argv[i]);
+                last_n = n;
+                last_specs = specs;
 
                 for (int j = 0; j < n; j++)
                     printf("%20s%c", specs[j].name, j < n-1 ? ' ' : '\n');
