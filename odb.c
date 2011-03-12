@@ -226,7 +226,32 @@ header_t read_headers(char **files, int n) {
 }
 
 size_t header_size(header_t h) {
-    return sizeof(preamble_t) + sizeof(h.field_count) + h.field_count*sizeof(field_spec_t);
+    return sizeof(preamble_t) +
+           sizeof(h.field_count) +
+           sizeof(field_spec_t) * h.field_count;
+}
+
+static header_t h;
+
+#define data(j,k) data[(j)*h.field_count+(k)]
+
+int lt_records(void *d, size_t a, size_t b) {
+    long long *data = (long long*) d;
+    for (int i = 0; i < h.field_count; i++)
+        if (data(a,i) != data(b,i))
+            return data(a,i) < data(b,i) ? 1 : 0;
+    return 0;
+}
+
+void swap_records(void *d, size_t a, size_t b) {
+    long long *data = (long long*) d;
+    for (int i = 0; i < h.field_count; i++) {
+        if (data(a,i) != data(b,i)) {
+            long long t = data(a,i);
+            data(a,i) = data(b,i);
+            data(b,i) = t;
+        }
+    }
 }
 
 int main(int argc, char **argv) {
@@ -301,7 +326,8 @@ int main(int argc, char **argv) {
             return 0;
         }
         case DECODE: {
-            header_t h = read_headers(argv, argc);
+            h = read_headers(argv, argc);
+            size_t h_size = header_size(h);
 
             for (int j = 0; j < h.field_count; j++)
                 printf("%20s%c", h.field_specs[j].name, j < h.field_count-1 ? ' ' : '\n');
@@ -309,16 +335,14 @@ int main(int argc, char **argv) {
                 printf("-");
             printf("\n");
 
-            int h_size = header_size(h);
-
             for (int i = 0; i < argc; i++) {
+                struct stat fs;
                 FILE *file = fopen(argv[i], "r");
                 dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", file, errstr);
+
                 dieif(fseek(file, h_size, SEEK_SET),
                       "seek error for %s: %s\n", argv[i], errstr);
-
-                struct stat fs;
-                dieif(fstat(fileno(file),&fs), "stat error for %s: %s\n", file, errstr);
 
                 while (ftell(file) < fs.st_size) {
                     for (int j = 0; j < h.field_count; j++) {
@@ -348,30 +372,31 @@ int main(int argc, char **argv) {
             return 0;
         }
         case SORT: {
-            header_t h = read_headers(argv, argc);
+            h = read_headers(argv, argc);
+            size_t h_size = header_size(h);
 
             for (int i = 0; i < argc; i++) {
-                FILE *file = fopen(argv[i],"r+");
+                struct stat fs;
+                FILE *file = fopen(argv[i], "r+");
                 dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", file, errstr);
 
-                // struct stat fs;
-                // fstat(fileno(file), &fs);
-                // char *data = mmap(
-                //   0,
-                //   fs.st_size,
-                //   PROT_READ | PROT_WRITE,
-                //   MAP_SHARED,
-                //   fileno(file),
-                //   0
-                // );
-                // dieif(data == MAP_FAILED, "mmap failed for %s: %s\n", argv[i], errstr);
-                // dieif(memcmp(data, &preamble, sizeof(preamble_t)),
-                //       "invalid odb file: %s\n", argv[i]);
-                // 
-                // // su_smoothsort(packets,0,n,lt,swap_packets);
-                // 
-                // munmap(data, fs.st_size);
+                char *mapped = mmap(
+                  NULL,
+                  fs.st_size,
+                  PROT_READ | PROT_WRITE,
+                  MAP_FILE  | MAP_SHARED,
+                  fileno(file),
+                  0
+                );
+                dieif(mapped == MAP_FAILED, "mmap failed for %s: %s\n", argv[i], errstr);
+                dieif(memcmp(mapped, &preamble, sizeof(preamble_t)), "invalid odb file\n");
 
+                long long *data = (long long*)(mapped+h_size);
+                size_t n = (fs.st_size-h_size)/(h.field_count*sizeof(long long));
+                su_smoothsort(data, 0, n, lt_records, swap_records);
+
+                dieif(munmap(mapped, fs.st_size), "munmap failed for %s: %s\n", argv[i], errstr);
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
 
