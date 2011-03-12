@@ -95,6 +95,22 @@ char *typestr(field_type_t type) {
     }
 }
 
+int typewidth(field_type_t type) {
+    switch (type) {
+        case INTEGER: return 20;
+        case FLOAT:   return 20;
+        case STRING:  return 20;
+        default:      return -1;
+    }
+}
+
+typedef struct {
+    char magic[4];
+    unsigned long long bom;
+} __attribute__ ((__packed__)) preamble_t;
+
+static const preamble_t preamble = {"odb", 0x0123456789abcdef};
+
 typedef struct {
     field_type_t type;
     char name[256-sizeof(field_type_t)];
@@ -142,8 +158,13 @@ void fwrite1(const void *restrict ptr, size_t size, FILE *restrict stream) {
     fwriten(ptr, size, 1, stream);
 }
 
-static const char *const magic = "odb";
-static const unsigned long long bom = 0x0123456789abcdef;
+void freadn(void *restrict ptr, size_t size, size_t n, FILE *restrict stream) {
+    dieif(fread(ptr, size, n, stream) != n, "read error: %s\n", errstr);
+}
+
+void fread1(void *restrict ptr, size_t size, FILE *restrict stream) {
+    freadn(ptr, size, 1, stream);
+}
 
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
@@ -157,8 +178,7 @@ int main(int argc, char **argv) {
 
     switch (cmd) {
         case ENCODE: {
-            fwrite1(magic, strlen(magic)+1, stdout);
-            fwrite1(&bom, sizeof(bom), stdout);
+            fwrite1(&preamble, sizeof(preamble_t), stdout);
 
             long long n;
             field_spec_t *specs = malloc(argc*sizeof(field_spec_t));
@@ -220,7 +240,23 @@ int main(int argc, char **argv) {
             return 0;
         }
         case DECODE: {
-            warn("decoding...\n");
+            for (int i = 0; i < argc; i++) {
+                FILE *file = fopen(argv[i], "r");
+                dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+
+                char *buffer = malloc(sizeof(preamble_t));
+                fread1(buffer, sizeof(preamble_t), file);
+                dieif(memcmp(buffer, &preamble, sizeof(preamble_t)), "invalid odb file: %s\n", argv[i]);
+
+                long long n;
+                fread1(&n, sizeof(n), file);
+                field_spec_t *specs = malloc(n*sizeof(field_spec_t));
+                freadn(specs, sizeof(field_spec_t), n, file);
+
+                for (int j = 0; j < n; j++)
+                    printf("%20s%c", specs[j].name, j < n-1 ? ' ' : '\n');
+            }
+
             return 0;
         }
         case HELP:
