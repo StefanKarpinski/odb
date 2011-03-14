@@ -211,16 +211,28 @@ int check_header(FILE *file, header_t hh) {
     return match;
 }
 
-header_t read_headers(char **files, int n) {
+FILE *fopenr_arg(int argc, char **argv, int i) {
+    if (argc == 0 && i == 0)    return stdin;
+    if (argc <= i)              return NULL;
+    if (!strcmp(argv[i], "-"))  return stdin;
+
+    FILE *file = fopen(argv[i], "r");
+    dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+    return file;
+}
+
+header_t read_headers(int argc, char **argv) {
     header_t h;
-    for (int i = 0; i < n; i++) {
-        FILE *file = fopen(files[i], "r");
-        dieif(!file, "error opening %s: %s\n", files[i], errstr);
-
-        if (!i) h = read_header(file);
-        else dieif(!check_header(file,h), "field spec mismatch: %s\n", files[i]);
-
-        dieif(fclose(file), "error closing %s: %s\n", files[i], errstr);
+    FILE *file;
+    int stdin_seen = 0;
+    for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+        if (!fileno(file)) {
+            if (stdin_seen) continue;
+            stdin_seen = 1;
+        }
+        if (i == 0) h = read_header(file);
+        else dieif(!check_header(file,h), "field spec mismatch: %s\n", argv[i]);
+        if (fileno(file)) dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
     }
     return h;
 }
@@ -272,18 +284,18 @@ int main(int argc, char **argv) {
             field_spec_t *specs = malloc(argc*sizeof(field_spec_t));
             for (n = 0; n < argc; n++) {
                 if (!strcmp(argv[n], "--")) {
-                    specs = realloc(specs, n++);
+                    specs = realloc(specs, n);
+                    argv++; argc--;
                     break;
                 }
                 specs[n] = parse_field_spec(argv[n]);
             }
-            argv += n; argc -= n; n--;
+            argv += n; argc -= n;
 
             write_header(stdout, n, specs);
 
-            for (int i = 0; i < argc; i++) {
-                FILE *file = fopen(argv[i], "r");
-                dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+            FILE *file;
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 size_t length;
                 char *line, *buffer = NULL;
                 while (line = get_line(file,&buffer,&length)) {
@@ -313,11 +325,11 @@ int main(int argc, char **argv) {
                                 die("encoding type %s not yet implemented\n", typestr(specs[j].type));
                         }
                         if (j < n-1) {
-                            dieif(line[0] != '\t', "tab expected, got '%c'", line[0]);
+                            dieif(line[0] != '\t', "tab expected, got '%c'\n", line[0]);
                             line++;
                         } else {
                             dieif(!(line[0] == '\n' || line[0] == '\r'),
-                                  "end of line expected, got '%c'", line[0]);
+                                  "end of line expected, got '%c'\n", line[0]);
                         }
                     }
                 }
@@ -327,7 +339,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         case DECODE: {
-            h = read_headers(argv, argc);
+            h = read_headers(argc, argv);
             size_t h_size = header_size(h);
 
             for (int j = 0; j < h.field_count; j++)
@@ -336,15 +348,18 @@ int main(int argc, char **argv) {
                 printf("-");
             printf("\n");
 
-            for (int i = 0; i < argc; i++) {
+            FILE *file;
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 struct stat fs;
-                FILE *file = fopen(argv[i], "r");
-                dieif(!file, "error opening %s: %s\n", argv[i], errstr);
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", file, errstr);
 
-                dieif(fseek(file, h_size, SEEK_SET),
-                      "seek error for %s: %s\n", argv[i], errstr);
+                if (fileno(file)) {
+                    // TODO: use call that supports larger file sizes
+                    dieif(fseek(file, h_size, SEEK_SET),
+                          "seek error for %s: %s\n", argv[i], errstr);
+                }
 
+                // TODO: use call that supports larger file sizes
                 while (ftell(file) < fs.st_size) {
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
@@ -373,25 +388,27 @@ int main(int argc, char **argv) {
             return 0;
         }
         case SORT: {
-            int n;
             sort_order = malloc(argc*sizeof(int));
-            for (n = 0; n < argc; n++) {
-                if (!strcmp(argv[n], "--")) {
-                    sort_order = realloc(sort_order, n++);
+            for (sort_n = 0; sort_n < argc; sort_n++) {
+                if (!strcmp(argv[sort_n], "--")) {
+                    sort_order = realloc(sort_order, sort_n);
+                    argv++; argc--;
                     break;
                 }
-                sort_order[n] = atoi(argv[n]);
+                sort_order[sort_n] = atoi(argv[sort_n]);
             }
-            argv += n; argc -= n;
-            sort_n = n-1;
+            argv += sort_n; argc -= sort_n;
+            dieif(!argc, "sorting stdin not supported\n");
 
-            h = read_headers(argv, argc);
+            h = read_headers(argc, argv);
             size_t h_size = header_size(h);
 
             for (int i = 0; i < argc; i++) {
-                struct stat fs;
+                dieif(!strcmp(argv[i], "-"), "sorting stdin not supported\n");
                 FILE *file = fopen(argv[i], "r+");
                 dieif(!file, "error opening %s: %s\n", argv[i], errstr);
+
+                struct stat fs;
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", file, errstr);
 
                 char *mapped = mmap(
