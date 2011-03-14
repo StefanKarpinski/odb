@@ -339,13 +339,11 @@ int main(int argc, char **argv) {
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
 
                 if (fileno(file)) {
-                    // TODO: use call that supports larger file sizes
-                    dieif(fseek(file, h_size, SEEK_SET),
+                    dieif(fseeko(file, h_size, SEEK_SET),
                           "seek error for %s: %s\n", argv[i], errstr);
                 }
 
-                // TODO: use call that supports larger file sizes
-                while (ftell(file) < fs.st_size) {
+                while (ftello(file) < fs.st_size) {
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
                             case INTEGER: {
