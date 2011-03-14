@@ -10,6 +10,10 @@
 #include <sys/param.h>
 #include <sys/sysctl.h>
 
+// external dependencies:
+#include <cmph.h>
+
+// internal headers:
 #include "smoothsort.h"
 
 #define errstr                  strerror(errno)
@@ -265,6 +269,27 @@ char *ltrunc(char *line) {
     return line;
 }
 
+typedef struct {
+    off_t *offsets;
+    off_t index;
+    char *data;
+} cmph_state_t;
+
+static int key_read(void *state, char **key, cmph_uint32 *len) {
+    cmph_state_t *s = (cmph_state_t*) state;
+    *key = s->data + s->offsets[s->index++];
+    return *len = strlen(*key);
+}
+static void key_rewind(void *state) {
+    cmph_state_t *s = (cmph_state_t*) state;
+    s->index = 0;
+}
+static void key_dispose(void *state, char *key, cmph_uint32 len) { }
+
+void ff_stream(FILE *file, size_t unit) {
+    dieif(fseeko(file, unit*(ftello(file)/unit+1), SEEK_SET), "seek error: %s\n", errstr);
+}
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
@@ -274,17 +299,20 @@ int main(int argc, char **argv) {
 
     switch (cmd) {
         case STRINGS: {
-            FILE *strings = fopen(strings_file, "w");
+            off_t strings_off, offsets_off, reverse_off, cmph_off;
+
+            FILE *strings = fopen(strings_file, "w+");
             dieif(!strings, "error opening %s: %s\n", strings_file, errstr);
+            strings_off = ftello(strings);
 
             off_t n = 0;
             off_t allocated = 4096;
             off_t *offsets = malloc(allocated*sizeof(off_t));
 
+            warn("reading strings\n");
             FILE *file;
             char *last = NULL;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-
                 size_t length;
                 char *line, *buffer = NULL;
                 while (line = get_line(file,&buffer,&length)) {
@@ -305,15 +333,79 @@ int main(int argc, char **argv) {
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
-            fseeko(strings, sizeof(off_t)*(ftello(strings)/sizeof(off_t)+1), SEEK_SET);
+            dieif(!n, "no strings provided\n");
             offsets = realloc(offsets, n*sizeof(off_t));
+
+            // write out the table of offsets
+            warn("writing string offsets\n");
+            ff_stream(strings, sizeof(off_t));
+            offsets_off = ftello(strings);
             fwriten(offsets, sizeof(off_t), n, strings);
-            fwrite1(&n, sizeof(size_t), strings);
+
+            // mmap the written strings data for reading
+            warn("generating minimal perfect hash\n");
+            char *data = mmap(
+              NULL,
+              ftello(strings),
+              PROT_READ,
+              MAP_PRIVATE,
+              fileno(strings),
+              0
+            );
+            dieif(data == MAP_FAILED, "mmap failed for %s: %s\n", strings_file, errstr);
+
+            // generate a minimal perfect hash for strings
+            cmph_state_t state = {offsets, 0, data};
+            cmph_io_adapter_t adapter;
+            adapter.data = (void*)&state;
+            adapter.nkeys = n;
+            adapter.read = key_read;
+            adapter.rewind = key_rewind;
+            adapter.dispose = key_dispose;
+
+            // TODO: cmph segfaults on some binary data.
+            cmph_config_t *config = cmph_config_new(&adapter);
+            cmph_config_set_algo(config, CMPH_CHD);
+            cmph_t *hash = cmph_new(config);
+            dieif(!hash, "error generating hash\n");
+            cmph_config_destroy(config);
+
+            warn("generating reverse index\n");
+            off_t *reverse = offsets;
+            offsets = (off_t*)(data + offsets_off);
+            for (int i = 0; i < n; i++) {
+                char *str = data + offsets[i];
+                cmph_uint32 h = cmph_search(hash, str, strlen(str));
+                reverse[h] = i;
+            }
+
+            // write out reverse map of offsets
+            warn("writing reverse index\n");
+            ff_stream(strings, sizeof(off_t));
+            reverse_off = ftello(strings);
+            fwriten(reverse, sizeof(off_t), n, strings);
+
+            // write out cmph structure
+            warn("writing perfect hash\n");
+            ff_stream(strings, sizeof(off_t));
+            cmph_off = ftello(strings);
+            cmph_dump(hash, strings);
+
+            // write n and table of offsets
+            warn("writing footer\n");
+            ff_stream(strings, sizeof(off_t));
+            fwrite1(&n, sizeof(off_t), strings);
+            fwrite1(&strings_off, sizeof(off_t), strings);
+            fwrite1(&offsets_off, sizeof(off_t), strings);
+            fwrite1(&reverse_off, sizeof(off_t), strings);
+            fwrite1(&cmph_off, sizeof(off_t), strings);
+
             dieif(fclose(strings), "error closing %s: %s\n", strings_file, errstr);
             return 0;
         }
         case ENCODE: {
             long long n;
+            int has_strings = 0;
             field_spec_t *specs = malloc(argc*sizeof(field_spec_t));
             for (n = 0; n < argc; n++) {
                 if (!strcmp(argv[n], "--")) {
@@ -322,10 +414,15 @@ int main(int argc, char **argv) {
                     break;
                 }
                 specs[n] = parse_field_spec(argv[n]);
+                if (specs[n].type == STRING) has_strings = 1;
             }
             argv += n; argc -= n;
 
             write_header(stdout, n, specs);
+
+            if (has_strings) {
+                // TODO: load the strings index
+            }
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
@@ -444,7 +541,7 @@ int main(int argc, char **argv) {
                   NULL,
                   fs.st_size,
                   PROT_READ | PROT_WRITE,
-                  MAP_FILE  | MAP_SHARED,
+                  MAP_SHARED,
                   fileno(file),
                   0
                 );
