@@ -290,6 +290,35 @@ void ff_stream(FILE *file, size_t unit) {
     dieif(fseeko(file, unit*(ftello(file)/unit+1), SEEK_SET), "seek error: %s\n", errstr);
 }
 
+off_t string_n;
+char *string_data;
+off_t *string_offsets;
+off_t *string_reverse;
+void *cmph_data;
+
+void load_strings() {
+    struct stat fs;
+    FILE *strings = fopen(strings_file, "r");
+    dieif(!strings, "error opening %s: %s", strings_file, errstr);
+    dieif(fstat(fileno(strings), &fs), "stat error for %s: %s\n", strings_file, errstr);
+    char *data = mmap(
+        NULL,
+        fs.st_size,
+        PROT_READ,
+        MAP_PRIVATE,
+        fileno(strings),
+        0
+    );
+    dieif(data == MAP_FAILED, "mmap failed for %s: %s\n", strings_file, errstr);
+    off_t *offsets = (off_t*) data;
+    off_t i = fs.st_size/sizeof(off_t);
+    void *cmph_data = data + offsets[--i];
+    string_reverse = (off_t*)(data + offsets[--i]);
+    string_offsets = (off_t*)(data + offsets[--i]);
+    string_data = data + offsets[--i];
+    return;
+}
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
@@ -345,12 +374,12 @@ int main(int argc, char **argv) {
             // mmap the written strings data for reading
             warn("generating minimal perfect hash\n");
             char *data = mmap(
-              NULL,
-              ftello(strings),
-              PROT_READ,
-              MAP_PRIVATE,
-              fileno(strings),
-              0
+                NULL,
+                ftello(strings),
+                PROT_READ,
+                MAP_PRIVATE,
+                fileno(strings),
+                0
             );
             dieif(data == MAP_FAILED, "mmap failed for %s: %s\n", strings_file, errstr);
 
@@ -417,12 +446,8 @@ int main(int argc, char **argv) {
                 if (specs[n].type == STRING) has_strings = 1;
             }
             argv += n; argc -= n;
-
             write_header(stdout, n, specs);
-
-            if (has_strings) {
-                // TODO: load the strings index
-            }
+            if (has_strings) load_strings();
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
@@ -538,12 +563,12 @@ int main(int argc, char **argv) {
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
 
                 char *mapped = mmap(
-                  NULL,
-                  fs.st_size,
-                  PROT_READ | PROT_WRITE,
-                  MAP_SHARED,
-                  fileno(file),
-                  0
+                    NULL,
+                    fs.st_size,
+                    PROT_READ | PROT_WRITE,
+                    MAP_SHARED,
+                    fileno(file),
+                    0
                 );
                 dieif(mapped == MAP_FAILED, "mmap failed for %s: %s\n", argv[i], errstr);
                 dieif(memcmp(mapped, &preamble, sizeof(preamble_t)), "invalid odb file\n");
