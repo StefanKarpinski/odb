@@ -240,8 +240,10 @@ int lt_records(void *d, size_t a, size_t b) {
     long long *data = (long long*) d;
     for (int i = 0; i < sort_n; i++) {
         int j = sort_order[i];
+        int s = j < 0 ? -1 : 1;
+        j = s*j - 1;
         if (data(a,j) != data(b,j))
-            return data(a,j) < data(b,j) ? 1 : 0;
+            return s*data(a,j) < s*data(b,j) ? 1 : 0;
     }
     return 0;
 }
