@@ -14,29 +14,9 @@
 
 #define errstr strerror(errno)
 
-void warn(const char *fmt, ...) {
-  va_list args;
-  va_start(args,fmt);
-  vfprintf(stderr,fmt,args);
-  va_end(args);
-}
-
-void die(const char *fmt, ...) {
-  va_list args;
-  va_start(args,fmt);
-  vfprintf(stderr,fmt,args);
-  va_end(args);
-  exit(1);
-}
-
-void dieif(int test, const char *fmt, ...) {
-    if (!test) return;
-    va_list args;
-    va_start(args,fmt);
-    vfprintf(stderr,fmt,args);
-    va_end(args);
-    exit(1);
-}
+#define warn(fmt,args...)       fprintf(stderr,fmt,##args)
+#define die(fmt,args...)        {fprintf(stderr,fmt,##args);exit(1);}
+#define dieif(cond,fmt,args...) if (cond) die(fmt,##args);
 
 static const char *const usage =
     "usage: odb [command] [options] [arguments...]";
@@ -271,6 +251,12 @@ void swap_records(void *d, size_t a, size_t b) {
     }
 }
 
+char *ltrunc(char *line) {
+    char *nl = strchr(line, '\n');
+    if (nl) *nl = '\0';
+    return line;
+}
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
@@ -304,9 +290,9 @@ int main(int argc, char **argv) {
                             case INTEGER: {
                                 errno = 0;
                                 long long v = strtoll(line,&line,10);
-                                dieif(errno == EINVAL && v == 0, "invalid integer at: %s", line);
-                                dieif(errno == ERANGE && v == LLONG_MIN, "integer underflow: %s", line);
-                                dieif(errno == ERANGE && v == LLONG_MAX, "integer overflow: %s", line);
+                                dieif(errno == EINVAL && v == 0, "invalid integer: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && v == LLONG_MIN, "integer underflow: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && v == LLONG_MAX, "integer overflow: %s\n", ltrunc(line));
                                 fwrite1(&v, sizeof(v), stdout);
                                 break;
                             }
@@ -314,9 +300,9 @@ int main(int argc, char **argv) {
                                 char *p;
                                 errno = 0;
                                 double v = strtod(line,&p);
-                                dieif(p == line && v == 0.0, "invalid float at: %s", line);
-                                dieif(errno == ERANGE && v == 0.0, "float underflow: %s", line);
-                                dieif(errno == ERANGE && abs(v) == HUGE_VAL, "float overflow: %s", line);
+                                dieif(p == line && v == 0.0, "invalid float: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && v == 0.0, "float underflow: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && abs(v) == HUGE_VAL, "float overflow: %s\n", ltrunc(line));
                                 fwrite1(&v, sizeof(v), stdout);
                                 line = p;
                                 break;
@@ -325,17 +311,16 @@ int main(int argc, char **argv) {
                                 die("encoding type %s not yet implemented\n", typestr(specs[j].type));
                         }
                         if (j < n-1) {
-                            dieif(line[0] != '\t', "tab expected, got '%c'\n", line[0]);
+                            dieif(line[0] != '\t', "tab expected: %s\n", ltrunc(line));
                             line++;
                         } else {
                             dieif(!(line[0] == '\n' || line[0] == '\r'),
-                                  "end of line expected, got '%c'\n", line[0]);
+                                  "end of line expected: %s\n", ltrunc(line));
                         }
                     }
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
-
             return 0;
         }
         case DECODE: {
@@ -351,7 +336,7 @@ int main(int argc, char **argv) {
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 struct stat fs;
-                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", file, errstr);
+                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
 
                 if (fileno(file)) {
                     // TODO: use call that supports larger file sizes
@@ -384,7 +369,6 @@ int main(int argc, char **argv) {
 
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
-
             return 0;
         }
         case SORT: {
@@ -409,7 +393,7 @@ int main(int argc, char **argv) {
                 dieif(!file, "error opening %s: %s\n", argv[i], errstr);
 
                 struct stat fs;
-                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", file, errstr);
+                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
 
                 char *mapped = mmap(
                   NULL,
@@ -429,7 +413,6 @@ int main(int argc, char **argv) {
                 dieif(munmap(mapped, fs.st_size), "munmap failed for %s: %s\n", argv[i], errstr);
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
-
             return 0;
         }
         case HELP:
