@@ -86,11 +86,20 @@ void parse_opts(int *argcp, char ***argvp) {
 const int INVALID = -1;
 
 typedef enum {
+    STRINGS,
     ENCODE,
     DECODE,
     SORT,
     HELP
 } cmd_t;
+
+cmd_t parse_cmd(char *str) {
+    return !strcmp(str, "strings") ? STRINGS :
+           !strcmp(str, "encode")  ? ENCODE  :
+           !strcmp(str, "decode")  ? DECODE  :
+           !strcmp(str, "sort")    ? SORT    :
+           !strcmp(str, "help")    ? HELP    : INVALID ;
+}
 
 typedef enum {
     INTEGER,
@@ -104,15 +113,6 @@ char *typestr(field_type_t type) {
         case FLOAT:   return "float";
         case STRING:  return "string";
         default:      return "unknown";
-    }
-}
-
-int typewidth(field_type_t type) {
-    switch (type) {
-        case INTEGER: return 20;
-        case FLOAT:   return 20;
-        case STRING:  return 20;
-        default:      return -1;
     }
 }
 
@@ -263,11 +263,7 @@ int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
 
-    cmd_t cmd = !strcmp(argv[0], "encode") ? ENCODE  :
-                !strcmp(argv[0], "decode") ? DECODE  :
-                !strcmp(argv[0], "sort")   ? SORT    :
-                !strcmp(argv[0], "help")   ? HELP    :
-                                             INVALID ;
+    cmd_t cmd = parse_cmd(argv[0]);
     argv++; argc--;
 
     switch (cmd) {
