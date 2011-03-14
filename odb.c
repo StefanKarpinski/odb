@@ -12,8 +12,7 @@
 
 #include "smoothsort.h"
 
-#define errstr strerror(errno)
-
+#define errstr                  strerror(errno)
 #define warn(fmt,args...)       fprintf(stderr,fmt,##args)
 #define die(fmt,args...)        {fprintf(stderr,fmt,##args);exit(1);}
 #define dieif(cond,fmt,args...) if (cond) die(fmt,##args);
@@ -22,28 +21,37 @@ static const char *const usage =
     "usage: odb [command] [options] [arguments...]";
 
 static const char *const cmdstr =
+    "  strings              Generate strings index\n"
     "  encode               Encode data to ODB format\n"
     "  decode               Decode data from ODB format\n"
     "  help                 Print this message\n"
 ;
 
 static const char *const optstr =
-    " -e --float-format-e   Use %e to print floats\n"
-    " -g --float-format-g   Use %g to print floats\n"
+    " -s --strings=<file>   Use <file> as string index\n"
+    " -e --format-e         Use %e to print floats\n"
+    " -g --format-g         Use %g to print floats\n"
     " -h --help             Print this message\n"
 ;
 
 static char *float_format = "%20.6f%c";
+static char *strings_file = "strings.idx";
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "+egh";
+    static char* shortopts = "+s:egh";
     static struct option longopts[] = {
-        { "help", no_argument, 0, 'h' },
+        { "strings",  required_argument, 0, 's' },
+        { "format-e", no_argument,       0, 'e' },
+        { "format-g", no_argument,       0, 'g' },
+        { "help",     no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
     };
     int c;
     while ((c = getopt_long(*argcp, *argvp, shortopts, longopts, 0)) != -1) {
         switch(c) {
+            case 's':
+                strings_file = optarg;
+                break;
             case 'e':
                 float_format = "%20.6e%c";
                 break;
@@ -265,6 +273,45 @@ int main(int argc, char **argv) {
     argv++; argc--;
 
     switch (cmd) {
+        case STRINGS: {
+            FILE *strings = fopen(strings_file, "w");
+            dieif(!strings, "error opening %s: %s\n", strings_file, errstr);
+
+            off_t n = 0;
+            off_t allocated = 4096;
+            off_t *offsets = malloc(allocated*sizeof(off_t));
+
+            FILE *file;
+            char *last = NULL;
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+
+                size_t length;
+                char *line, *buffer = NULL;
+                while (line = get_line(file,&buffer,&length)) {
+                    char *nl = strchr(line, '\n');
+                    if (nl) *nl = '\0';
+                    if (last && !(strcmp(last, line) < 0)) {
+                        dieif(!strcmp(last, line), "strings not unique: %s\n", last);
+                        die("strings not sorted: %s > %s\n", last, line);
+                    }
+                    free(last); last = strdup(line);
+
+                    if (allocated <= n) {
+                        allocated *= 2;
+                        offsets = realloc(offsets, allocated*sizeof(off_t));
+                    }
+                    offsets[n++] = ftello(strings);
+                    fwrite1(line, strlen(line)+1, strings);
+                }
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+            }
+            fseeko(strings, sizeof(off_t)*(ftello(strings)/sizeof(off_t)+1), SEEK_SET);
+            offsets = realloc(offsets, n*sizeof(off_t));
+            fwriten(offsets, sizeof(off_t), n, strings);
+            fwrite1(&n, sizeof(size_t), strings);
+            dieif(fclose(strings), "error closing %s: %s\n", strings_file, errstr);
+            return 0;
+        }
         case ENCODE: {
             long long n;
             field_spec_t *specs = malloc(argc*sizeof(field_spec_t));

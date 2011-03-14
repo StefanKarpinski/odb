@@ -3,3 +3,5 @@
 *.dSYM
 *.tsv
 *.odb
+*.idx
+*.txt
