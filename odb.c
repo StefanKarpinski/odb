@@ -336,7 +336,9 @@ unexpected:
 }
 
 char *index_to_string(long long index) {
-    return string_data + string_offsets[index];
+    char *str = string_data + string_offsets[index];
+    dieif(index && str[-1], "string index mismatch\n");
+    return str;
 }
 
 int main(int argc, char **argv) {
