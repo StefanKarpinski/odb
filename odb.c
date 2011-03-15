@@ -27,7 +27,9 @@ static const char *const usage =
 static const char *const cmdstr =
     "  strings              Generate strings index\n"
     "  encode               Encode data to ODB format\n"
-    "  decode               Decode data from ODB format\n"
+    "  cat                  Concatenate ODB files with like schemas\n"
+    "  sort                 Sort ODB files in specified orderings\n"
+    "  display              Display data in tabular format\n"
     "  help                 Print this message\n"
 ;
 
