@@ -38,7 +38,7 @@ static const char *const optstr =
     " -h --help             Print this message\n"
 ;
 
-static char *float_format = "%20.6f%c";
+static char *float_format = " %20.6f";
 static char *strings_file = "strings.idx";
 
 void parse_opts(int *argcp, char ***argvp) {
@@ -57,10 +57,10 @@ void parse_opts(int *argcp, char ***argvp) {
                 strings_file = optarg;
                 break;
             case 'e':
-                float_format = "%20.6e%c";
+                float_format = " %20.6e";
                 break;
             case 'g':
-                float_format = "%20.6g%c";
+                float_format = " %20.6g";
                 break;
             case 'h':
                 printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
@@ -290,11 +290,11 @@ void ff_stream(FILE *file, size_t unit) {
     dieif(fseeko(file, unit*(ftello(file)/unit+1), SEEK_SET), "seek error: %s\n", errstr);
 }
 
-off_t string_n;
+off_t string_count;
 char *string_data;
 off_t *string_offsets;
 off_t *string_reverse;
-void *cmph_data;
+cmph_t *string_hash;
 
 void load_strings() {
     struct stat fs;
@@ -312,11 +312,31 @@ void load_strings() {
     dieif(data == MAP_FAILED, "mmap failed for %s: %s\n", strings_file, errstr);
     off_t *offsets = (off_t*) data;
     off_t i = fs.st_size/sizeof(off_t);
-    void *cmph_data = data + offsets[--i];
-    string_reverse = (off_t*)(data + offsets[--i]);
-    string_offsets = (off_t*)(data + offsets[--i]);
+    string_count = offsets[--i];
     string_data = data + offsets[--i];
+    string_offsets = (off_t*)(data + offsets[--i]);
+    string_reverse = (off_t*)(data + offsets[--i]);
+    dieif(fseeko(strings, offsets[--i], SEEK_SET), "seek error in %s: %s", strings_file, errstr);
+    string_hash = cmph_load(strings);
+    dieif(fseeko(strings, 0, SEEK_SET), "seek error in %s: %s", strings_file, errstr);
+    dieif(!string_hash, "error loading string hash\n");
     return;
+}
+
+long long string_to_index(char *str, off_t len) {
+    cmph_uint32 h = cmph_search(string_hash, str, len);
+    if (!(0 <= h && h < string_count)) goto unexpected;
+    off_t index = string_reverse[h];
+    off_t offset = string_offsets[index];
+    if (strncmp(str, string_data + offset, len)) goto unexpected;
+    return index;
+unexpected:
+    str[len] = '\0';
+    die("unexpected string: %s\n", str);
+}
+
+char *index_to_string(long long index) {
+    return string_data + string_offsets[index];
 }
 
 int main(int argc, char **argv) {
@@ -419,11 +439,11 @@ int main(int argc, char **argv) {
             // write n and table of offsets
             warn("writing footer\n");
             ff_stream(strings, sizeof(off_t));
-            fwrite1(&n, sizeof(off_t), strings);
-            fwrite1(&strings_off, sizeof(off_t), strings);
-            fwrite1(&offsets_off, sizeof(off_t), strings);
-            fwrite1(&reverse_off, sizeof(off_t), strings);
             fwrite1(&cmph_off, sizeof(off_t), strings);
+            fwrite1(&reverse_off, sizeof(off_t), strings);
+            fwrite1(&offsets_off, sizeof(off_t), strings);
+            fwrite1(&strings_off, sizeof(off_t), strings);
+            fwrite1(&n, sizeof(off_t), strings);
 
             dieif(fclose(strings), "error closing %s: %s\n", strings_file, errstr);
             return 0;
@@ -472,6 +492,18 @@ int main(int argc, char **argv) {
                                 line = p;
                                 break;
                             }
+                            case STRING: {
+                                off_t len = buffer + length - line;
+                                if (j < n-1) {
+                                    char *end = memchr(line, '\t', len);
+                                    dieif(!end, "tab expected after: %s\n", ltrunc(line));
+                                    len = end - line;
+                                }
+                                long long v = string_to_index(line, len);
+                                fwrite1(&v, sizeof(v), stdout);
+                                line += len;
+                                break;
+                            }
                             default:
                                 die("encoding type %s not yet implemented\n", typestr(specs[j].type));
                         }
@@ -492,11 +524,15 @@ int main(int argc, char **argv) {
             h = read_headers(argc, argv);
             size_t h_size = header_size(h);
 
-            for (int j = 0; j < h.field_count; j++)
-                printf("%20s%c", h.field_specs[j].name, j < h.field_count-1 ? ' ' : '\n');
-            for (int j = 0; j < 21*h.field_count; j++)
-                printf("-");
+            int has_strings = 0;
+            for (int j = 0; j < h.field_count; j++) {
+                if (h.field_specs[j].type == STRING) has_strings = 1;
+                printf(" %20s", h.field_specs[j].name);
+            }
             printf("\n");
+            for (int j = 0; j < 21*h.field_count+1; j++) printf("-");
+            printf("\n");
+            if (has_strings) load_strings();
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
@@ -514,13 +550,20 @@ int main(int argc, char **argv) {
                             case INTEGER: {
                                 long long v;
                                 fread1(&v, sizeof(v), file);
-                                printf("%20lld%c", v, j < h.field_count-1 ? ' ' : '\n');
+                                printf(" %20lld", v);
                                 break;
                             }
                             case FLOAT: {
                                 double v;
                                 fread1(&v, sizeof(v), file);
-                                printf(float_format, v, j < h.field_count-1 ? ' ' : '\n');
+                                printf(float_format, v);
+                                break;
+                            }
+                            case STRING: {
+                                long long v;
+                                fread1(&v, sizeof(v), file);
+                                char *s = index_to_string(v);
+                                printf(" %-20s", s);
                                 break;
                             }
                             default:
@@ -528,6 +571,7 @@ int main(int argc, char **argv) {
                                     typestr(h.field_specs[j].type));
                         }
                     }
+                    printf("\n");
                 }
 
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
