@@ -80,6 +80,7 @@ const int INVALID = -1;
 typedef enum {
     STRINGS,
     ENCODE,
+    CAT,
     DECODE,
     SORT,
     HELP
@@ -88,6 +89,7 @@ typedef enum {
 cmd_t parse_cmd(char *str) {
     return !strcmp(str, "strings") ? STRINGS :
            !strcmp(str, "encode")  ? ENCODE  :
+           !strcmp(str, "cat")     ? CAT     :
            !strcmp(str, "decode")  ? DECODE  :
            !strcmp(str, "sort")    ? SORT    :
            !strcmp(str, "help")    ? HELP    : INVALID ;
@@ -540,11 +542,8 @@ int main(int argc, char **argv) {
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 struct stat fs;
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
-
-                if (fileno(file)) {
-                    dieif(fseeko(file, h_size, SEEK_SET),
-                          "seek error for %s: %s\n", argv[i], errstr);
-                }
+                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
+                      "seek error for %s: %s\n", argv[i], errstr);
 
                 while (ftello(file) < fs.st_size) {
                     for (int j = 0; j < h.field_count; j++) {
@@ -574,6 +573,31 @@ int main(int argc, char **argv) {
                         }
                     }
                     printf("\n");
+                }
+
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+            }
+            return 0;
+        }
+        case CAT: {
+            h = read_headers(argc, argv);
+            size_t h_size = header_size(h);
+            write_header(stdout, h.field_count, h.field_specs);
+
+            FILE *file;
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+                struct stat fs;
+                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
+                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
+                      "seek error for %s: %s\n", argv[i], errstr);
+
+                for (;;) {
+                    char buffer[1<<15];
+                    size_t r = fread(buffer, 1, sizeof(buffer), file);
+                    dieif(ferror(file), "error reading %s: %s\n", argv[i], errstr);
+                    size_t w = fwrite(buffer, 1, r, stdout);
+                    dieif(w < r && ferror(stdout), "write error: %s\n", errstr);
+                    if (r < sizeof(buffer) && feof(file)) break;
                 }
 
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
