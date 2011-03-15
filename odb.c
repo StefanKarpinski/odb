@@ -81,8 +81,8 @@ typedef enum {
     STRINGS,
     ENCODE,
     CAT,
-    DECODE,
     SORT,
+    DISPLAY,
     HELP
 } cmd_t;
 
@@ -90,8 +90,8 @@ cmd_t parse_cmd(char *str) {
     return !strcmp(str, "strings") ? STRINGS :
            !strcmp(str, "encode")  ? ENCODE  :
            !strcmp(str, "cat")     ? CAT     :
-           !strcmp(str, "decode")  ? DECODE  :
            !strcmp(str, "sort")    ? SORT    :
+           !strcmp(str, "display") ? DISPLAY :
            !strcmp(str, "help")    ? HELP    : INVALID ;
 }
 
@@ -343,12 +343,47 @@ char *index_to_string(long long index) {
     return str;
 }
 
+pid_t less = 0;
+
+pid_t fork_less() {
+    int fd[2];
+    dieif(pipe(fd), "pipe failed: %s\n", errstr);
+    less = fork();
+    dieif(less == -1, "fork failed: %s\n", errstr);
+    if (less) {
+        dieif(close(fd[0]), "close failed: %s\n", errstr);
+        dieif(dup2(fd[1], fileno(stdout)) == -1, "dup2 failed: %s\n", errstr);
+        dieif(dup2(fd[1], fileno(stderr)) == -1, "dup2 failed: %s\n", errstr);
+        dieif(close(fd[1]), "close failed: %s\n", errstr);
+        return less;
+    } else {
+        dieif(close(fd[1]), "close failed: %s\n", errstr);
+        dieif(dup2(fd[0], fileno(stdin)) == -1, "dup2 failed: %s\n", errstr);
+        dieif(close(fd[0]), "close failed: %s\n", errstr);
+        execlp("less", "less", NULL);
+        die("exec failed: %s\n", errstr);
+    }
+}
+
+void wait_less() {
+    dieif(fflush(stdout), "fflush error: %s\n", errstr);
+    dieif(fflush(stderr), "fflush error: %s\n", errstr);
+    dieif(fclose(stdout), "close failed: %s\n", errstr);
+    dieif(fclose(stderr), "close failed: %s\n", errstr);
+    int status;
+    dieif(waitpid(less, &status, 0) == -1, "waitpid failed: %s\n", errstr);
+}
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
 
     cmd_t cmd = parse_cmd(argv[0]);
     argv++; argc--;
+
+    int is_tty = isatty(1);
+    if (cmd == CAT && is_tty) cmd = DISPLAY;
+    int pipe_to_less = is_tty && (cmd == DISPLAY || cmd == SORT);
 
     switch (cmd) {
         case STRINGS: {
@@ -362,7 +397,6 @@ int main(int argc, char **argv) {
             off_t allocated = 4096;
             off_t *offsets = malloc(allocated*sizeof(off_t));
 
-            warn("reading strings\n");
             FILE *file;
             char *last = NULL;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
@@ -386,13 +420,11 @@ int main(int argc, char **argv) {
             offsets = realloc(offsets, n*sizeof(off_t));
 
             // write out the table of offsets
-            warn("writing string offsets\n");
             ff_stream(strings, sizeof(off_t));
             offsets_off = ftello(strings);
             fwriten(offsets, sizeof(off_t), n, strings);
 
             // mmap the written strings data for reading
-            warn("generating minimal perfect hash\n");
             char *data = mmap(
                 NULL,
                 ftello(strings),
@@ -419,7 +451,6 @@ int main(int argc, char **argv) {
             dieif(!hash, "error generating hash\n");
             cmph_config_destroy(config);
 
-            warn("generating reverse index\n");
             off_t *reverse = offsets;
             offsets = (off_t*)(data + offsets_off);
             for (int i = 0; i < n; i++) {
@@ -429,19 +460,16 @@ int main(int argc, char **argv) {
             }
 
             // write out reverse map of offsets
-            warn("writing reverse index\n");
             ff_stream(strings, sizeof(off_t));
             reverse_off = ftello(strings);
             fwriten(reverse, sizeof(off_t), n, strings);
 
             // write out cmph structure
-            warn("writing perfect hash\n");
             ff_stream(strings, sizeof(off_t));
             cmph_off = ftello(strings);
             cmph_dump(hash, strings);
 
             // write n and table of offsets
-            warn("writing footer\n");
             ff_stream(strings, sizeof(off_t));
             fwrite1(&cmph_off, sizeof(off_t), strings);
             fwrite1(&reverse_off, sizeof(off_t), strings);
@@ -524,9 +552,10 @@ int main(int argc, char **argv) {
             }
             return 0;
         }
-        case DECODE: {
+        case DISPLAY: {
             h = read_headers(argc, argv);
             size_t h_size = header_size(h);
+            if (pipe_to_less) fork_less();
 
             int has_strings = 0;
             for (int j = 0; j < h.field_count; j++) {
@@ -577,6 +606,7 @@ int main(int argc, char **argv) {
 
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
+            if (pipe_to_less) wait_less();
             return 0;
         }
         case CAT: {
@@ -654,6 +684,4 @@ int main(int argc, char **argv) {
         default:
             die("invalid command: %s\n", argv[-1]);
     }
-
-    die("end of main reached\n");
 }
