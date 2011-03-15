@@ -347,12 +347,8 @@ int main(int argc, char **argv) {
                 while (line = get_line(file,&buffer,&length)) {
                     char *nl = strchr(line, '\n');
                     if (nl) *nl = '\0';
-                    if (last && !(strcmp(last, line) < 0)) {
-                        dieif(!strcmp(last, line), "strings not unique: %s\n", last);
-                        die("strings not sorted: %s > %s\n", last, line);
-                    }
+                    dieif(last && !strcmp(last, line), "strings not unique: %s\n", last);
                     free(last); last = strdup(line);
-
                     if (allocated <= n) {
                         allocated *= 2;
                         offsets = realloc(offsets, allocated*sizeof(off_t));
