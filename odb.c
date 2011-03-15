@@ -237,6 +237,7 @@ size_t header_size(header_t h) {
            sizeof(field_spec_t) * h.field_count;
 }
 
+size_t h_size;
 static header_t h;
 int sort_n, *sort_order;
 
@@ -554,7 +555,8 @@ int main(int argc, char **argv) {
         }
         case DISPLAY: {
             h = read_headers(argc, argv);
-            size_t h_size = header_size(h);
+            h_size = header_size(h);
+        display:
             if (pipe_to_less) fork_less();
 
             int has_strings = 0;
@@ -611,7 +613,7 @@ int main(int argc, char **argv) {
         }
         case CAT: {
             h = read_headers(argc, argv);
-            size_t h_size = header_size(h);
+            h_size = header_size(h);
             write_header(stdout, h.field_count, h.field_specs);
 
             FILE *file;
@@ -648,7 +650,7 @@ int main(int argc, char **argv) {
             dieif(!argc, "sorting stdin not supported\n");
 
             h = read_headers(argc, argv);
-            size_t h_size = header_size(h);
+            h_size = header_size(h);
 
             for (int i = 0; i < argc; i++) {
                 dieif(!strcmp(argv[i], "-"), "sorting stdin not supported\n");
@@ -674,6 +676,7 @@ int main(int argc, char **argv) {
                 su_smoothsort(data, 0, n, lt_records, swap_records);
 
                 dieif(munmap(mapped, fs.st_size), "munmap failed for %s: %s\n", argv[i], errstr);
+                if (pipe_to_less) goto display;
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             return 0;
