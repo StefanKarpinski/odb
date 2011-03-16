@@ -17,8 +17,16 @@
 #include "smoothsort.h"
 
 #define errstr                  strerror(errno)
-#define warn(fmt,args...)       fprintf(stderr,fmt,##args)
-#define die(fmt,args...)        {fprintf(stderr,fmt,##args);exit(1);}
+
+#define warn(fmt,args...)     { fflush(stdout); fsync(fileno(stdout)); \
+                                fprintf(stderr,fmt,##args);            \
+                                fflush(stderr); fsync(fileno(stderr)); }
+
+#define die(fmt,args...)      { fflush(stdout); fsync(fileno(stdout)); \
+                                fprintf(stderr,fmt,##args);            \
+                                fflush(stderr); fsync(fileno(stderr)); \
+                                exit(1); }
+
 #define dieif(cond,fmt,args...) if (cond) die(fmt,##args);
 
 static const char *const usage =
