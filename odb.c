@@ -225,6 +225,8 @@ FILE *fopenr_arg(int argc, char **argv, int i) {
     return file;
 }
 
+char *argstr(char *arg) { arg ? arg : "-"; }
+
 header_t read_headers(int argc, char **argv) {
     header_t h;
     FILE *file;
@@ -235,8 +237,8 @@ header_t read_headers(int argc, char **argv) {
             stdin_seen = 1;
         }
         if (i == 0) h = read_header(file);
-        else dieif(!check_header(file,h), "field spec mismatch: %s\n", argv[i]);
-        if (fileno(file)) dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+        else dieif(!check_header(file,h), "field spec mismatch: %s\n", argstr(argv[i]));
+        if (fileno(file)) dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
     }
     return h;
 }
@@ -429,7 +431,7 @@ int main(int argc, char **argv) {
                     if (maxlen < len) maxlen = len;
                     fwrite1(line, len+1, strings);
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             dieif(!n, "no strings provided\n");
             offsets = realloc(offsets, n*sizeof(off_t));
@@ -564,7 +566,7 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             return 0;
         }
@@ -576,20 +578,20 @@ int main(int argc, char **argv) {
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 struct stat fs;
-                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
+                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argstr(argv[i]), errstr);
                 dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
-                      "seek error for %s: %s\n", argv[i], errstr);
+                      "seek error for %s: %s\n", argstr(argv[i]), errstr);
 
                 for (;;) {
                     char buffer[1<<15];
                     size_t r = fread(buffer, 1, sizeof(buffer), file);
-                    dieif(ferror(file), "error reading %s: %s\n", argv[i], errstr);
+                    dieif(ferror(file), "error reading %s: %s\n", argstr(argv[i]), errstr);
                     size_t w = fwrite(buffer, 1, r, stdout);
                     dieif(w < r && ferror(stdout), "write error: %s\n", errstr);
                     if (r < sizeof(buffer) && feof(file)) break;
                 }
 
-                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             return 0;
         }
@@ -662,7 +664,7 @@ int main(int argc, char **argv) {
                 struct stat fs;
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
                 dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
-                      "seek error for %s: %s\n", argv[i], errstr);
+                      "seek error for %s: %s\n", argstr(argv[i]), errstr);
 
                 while (ftello(file) < fs.st_size) {
                     for (int j = 0; j < h.field_count; j++) {
@@ -694,7 +696,7 @@ int main(int argc, char **argv) {
                     printf("\n");
                 }
 
-                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             if (pipe_to_less) wait_less();
             return 0;
