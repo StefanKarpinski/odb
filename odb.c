@@ -661,12 +661,16 @@ int main(int argc, char **argv) {
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                struct stat fs;
-                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
                 dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
                       "seek error for %s: %s\n", argstr(argv[i]), errstr);
 
-                while (ftello(file) < fs.st_size) {
+                for (;;) {
+                    int c = getc(file);
+                    if (c == EOF) {
+                        dieif(ferror(file), "read error for %s: %s\n", argstr(argv[i]), errstr);
+                        break;
+                    }
+                    dieif(ungetc(c, file) == EOF, "ungetc failed: %s\n", errstr);
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
                             case INTEGER: {
