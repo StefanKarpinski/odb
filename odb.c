@@ -407,7 +407,7 @@ int main(int argc, char **argv) {
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 size_t length;
                 char *line, *buffer = NULL;
-                while (line = get_line(file,&buffer,&length)) {
+                while (line = get_line(file, &buffer, &length)) {
                     char *nl = strchr(line, '\n');
                     if (nl) *nl = '\0';
                     dieif(last && !strcmp(last, line), "strings not unique: %s\n", last);
@@ -490,7 +490,7 @@ int main(int argc, char **argv) {
         }
         case ENCODE: {
             long long n;
-            int has_strings = 0;
+            int string_fields = 0;
             field_spec_t *specs = malloc(argc*sizeof(field_spec_t));
             for (n = 0; n < argc; n++) {
                 if (!strcmp(argv[n], "--")) {
@@ -499,17 +499,17 @@ int main(int argc, char **argv) {
                     break;
                 }
                 specs[n] = parse_field_spec(argv[n]);
-                if (specs[n].type == STRING) has_strings = 1;
+                if (specs[n].type == STRING) string_fields++;
             }
             argv += n; argc -= n;
             write_header(stdout, n, specs);
-            if (has_strings) load_strings();
+            if (string_fields) load_strings();
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 size_t length;
                 char *line, *buffer = NULL;
-                while (line = get_line(file,&buffer,&length)) {
+                while (line = get_line(file, &buffer, &length)) {
                     for (int j = 0; j < n; j++) {
                         switch (specs[j].type) {
                             case INTEGER: {
@@ -636,15 +636,18 @@ int main(int argc, char **argv) {
         display:
             if (pipe_to_less) fork_less();
 
-            int has_strings = 0;
+            int string_fields = 0;
             for (int j = 0; j < h.field_count; j++) {
-                if (h.field_specs[j].type == STRING) has_strings = 1;
                 printf(" %20s", h.field_specs[j].name);
+                if (h.field_specs[j].type == STRING) string_fields++;
             }
             printf("\n");
-            for (int j = 0; j < 21*h.field_count+1; j++) printf("-");
+            if (string_fields) load_strings();
+            int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
+            for (int j = 0; j < dashes; j++) printf("-");
             printf("\n");
-            if (has_strings) load_strings();
+            char *string_format;
+            asprintf(&string_format, " %%-%ds", string_maxlen);
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
@@ -672,7 +675,7 @@ int main(int argc, char **argv) {
                                 long long v;
                                 fread1(&v, sizeof(v), file);
                                 char *s = index_to_string(v);
-                                printf(" %-20s", s);
+                                printf(string_format, s);
                                 break;
                             }
                             default:
