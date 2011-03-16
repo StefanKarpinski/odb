@@ -353,6 +353,8 @@ unexpected:
 }
 
 char *index_to_string(long long index) {
+    dieif(!(0 <= index && index <= string_count),
+          "invalid string index: %lld\n", index);
     char *str = string_data + string_offsets[index];
     dieif(index && str[-1], "string index mismatch\n");
     return str;
