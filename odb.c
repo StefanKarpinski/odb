@@ -291,7 +291,7 @@ static void key_rewind(void *state) {
 }
 static void key_dispose(void *state, char *key, cmph_uint32 len) { }
 
-void ff_stream(FILE *file, size_t unit) {
+void ff_align(FILE *file, size_t unit) {
     dieif(fseeko(file, unit*(ftello(file)/unit+1), SEEK_SET), "seek error: %s\n", errstr);
 }
 
@@ -300,6 +300,7 @@ char *string_data;
 off_t *string_offsets;
 off_t *string_reverse;
 cmph_t *string_hash;
+off_t string_maxlen;
 
 void load_strings() {
     struct stat fs;
@@ -324,6 +325,7 @@ void load_strings() {
     dieif(fseeko(strings, offsets[--i], SEEK_SET), "seek error in %s: %s", strings_file, errstr);
     string_hash = cmph_load(strings);
     dieif(fseeko(strings, 0, SEEK_SET), "seek error in %s: %s", strings_file, errstr);
+    string_maxlen = offsets[--i];
     dieif(!string_hash, "error loading string hash\n");
     return;
 }
@@ -390,7 +392,7 @@ int main(int argc, char **argv) {
 
     switch (cmd) {
         case STRINGS: {
-            off_t strings_off, offsets_off, reverse_off, cmph_off;
+            off_t strings_off, offsets_off, reverse_off, cmph_off, maxlen = 0;
 
             FILE *strings = fopen(strings_file, "w+");
             dieif(!strings, "error opening %s: %s\n", strings_file, errstr);
@@ -415,7 +417,9 @@ int main(int argc, char **argv) {
                         offsets = realloc(offsets, allocated*sizeof(off_t));
                     }
                     offsets[n++] = ftello(strings);
-                    fwrite1(line, strlen(line)+1, strings);
+                    off_t len = strlen(line);
+                    if (maxlen < len) maxlen = len;
+                    fwrite1(line, len+1, strings);
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
@@ -423,7 +427,7 @@ int main(int argc, char **argv) {
             offsets = realloc(offsets, n*sizeof(off_t));
 
             // write out the table of offsets
-            ff_stream(strings, sizeof(off_t));
+            ff_align(strings, sizeof(off_t));
             offsets_off = ftello(strings);
             fwriten(offsets, sizeof(off_t), n, strings);
 
@@ -463,17 +467,18 @@ int main(int argc, char **argv) {
             }
 
             // write out reverse map of offsets
-            ff_stream(strings, sizeof(off_t));
+            ff_align(strings, sizeof(off_t));
             reverse_off = ftello(strings);
             fwriten(reverse, sizeof(off_t), n, strings);
 
             // write out cmph structure
-            ff_stream(strings, sizeof(off_t));
+            ff_align(strings, sizeof(off_t));
             cmph_off = ftello(strings);
             cmph_dump(hash, strings);
 
             // write n and table of offsets
-            ff_stream(strings, sizeof(off_t));
+            ff_align(strings, sizeof(off_t));
+            fwrite1(&maxlen, sizeof(off_t), strings);
             fwrite1(&cmph_off, sizeof(off_t), strings);
             fwrite1(&reverse_off, sizeof(off_t), strings);
             fwrite1(&offsets_off, sizeof(off_t), strings);
@@ -509,7 +514,7 @@ int main(int argc, char **argv) {
                         switch (specs[j].type) {
                             case INTEGER: {
                                 errno = 0;
-                                long long v = strtoll(line,&line,10);
+                                long long v = strtoll(line, &line, 10);
                                 dieif(errno == EINVAL && v == 0, "invalid integer: %s\n", ltrunc(line));
                                 dieif(errno == ERANGE && v == LLONG_MIN, "integer underflow: %s\n", ltrunc(line));
                                 dieif(errno == ERANGE && v == LLONG_MAX, "integer overflow: %s\n", ltrunc(line));
@@ -519,7 +524,7 @@ int main(int argc, char **argv) {
                             case FLOAT: {
                                 char *p;
                                 errno = 0;
-                                double v = strtod(line,&p);
+                                double v = strtod(line, &p);
                                 dieif(p == line && v == 0.0, "invalid float: %s\n", ltrunc(line));
                                 dieif(errno == ERANGE && v == 0.0, "float underflow: %s\n", ltrunc(line));
                                 dieif(errno == ERANGE && abs(v) == HUGE_VAL, "float overflow: %s\n", ltrunc(line));
