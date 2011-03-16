@@ -35,9 +35,14 @@ static const char *const usage =
 static const char *const cmdstr =
     "  strings              Generate strings index\n"
     "  encode               Encode data to ODB format\n"
-    "  cat                  Concatenate ODB files with like schemas\n"
-    "  sort                 Sort ODB files in specified orderings\n"
-    "  display              Display data in tabular format\n"
+    "  cat                  Concatenate files with like schemas\n"
+    "  cut                  Cut selected columns\n"
+    "  paste                Paste columns from different files\n"
+    "  join                 Join files on specified fields\n"
+    "  print                Print data in tabular format\n"
+    "  sort                 Sort by specified fields (in place)\n"
+    "  rename               Rename fields (in place)\n"
+    "  cast                 Cast fields as different types (in place)\n"
     "  help                 Print this message\n"
 ;
 
@@ -97,8 +102,13 @@ typedef enum {
     STRINGS,
     ENCODE,
     CAT,
+    CUT,
+    PASTE,
+    JOIN,
+    PRINT,
     SORT,
-    DISPLAY,
+    RENAME,
+    CAST,
     HELP
 } cmd_t;
 
@@ -106,9 +116,14 @@ cmd_t parse_cmd(char *str) {
     return !strcmp(str, "strings") ? STRINGS :
            !strcmp(str, "encode")  ? ENCODE  :
            !strcmp(str, "cat")     ? CAT     :
+           !strcmp(str, "cut")     ? CUT     :
+           !strcmp(str, "paste")   ? PASTE   :
+           !strcmp(str, "join")    ? JOIN    :
+           !strcmp(str, "print")   ? PRINT   :
            !strcmp(str, "sort")    ? SORT    :
-           !strcmp(str, "display") ? DISPLAY :
-           !strcmp(str, "help")    ? HELP    : INVALID ;
+           !strcmp(str, "rename")  ? RENAME  :
+           !strcmp(str, "cast")    ? CAST    :
+           !strcmp(str, "help")    ? HELP    : INVALID;
 }
 
 typedef enum {
@@ -411,8 +426,8 @@ int main(int argc, char **argv) {
     argv++; argc--;
 
     int is_tty = isatty(1);
-    if (cmd == CAT && is_tty) cmd = DISPLAY;
-    int pipe_to_less = is_tty && (cmd == DISPLAY || cmd == SORT);
+    if (cmd == CAT && is_tty) cmd = PRINT;
+    int pipe_to_less = is_tty && (cmd == PRINT || cmd == SORT);
 
     switch (cmd) {
         case STRINGS: {
@@ -659,15 +674,15 @@ int main(int argc, char **argv) {
                 su_smoothsort(data, 0, n, lt_records, swap_records);
 
                 dieif(munmap(mapped, fs.st_size), "munmap failed for %s: %s\n", argv[i], errstr);
-                if (pipe_to_less) goto display;
+                if (pipe_to_less) goto print;
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             return 0;
         }
-        case DISPLAY: {
+        case PRINT: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
-        display:
+        print:
             if (pipe_to_less) fork_less();
 
             int string_fields = 0;
