@@ -42,18 +42,21 @@ static const char *const cmdstr =
 ;
 
 static const char *const optstr =
+    " -f --fields=<fields>  Comma-sparated fields\n"
     " -s --strings=<file>   Use <file> as string index\n"
     " -e --format-e         Use %e to print floats\n"
     " -g --format-g         Use %g to print floats\n"
     " -h --help             Print this message\n"
 ;
 
-static char *float_format = " %20.6f";
+static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
+static char *float_format = " %20.6f";
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "+s:egh";
+    static char* shortopts = "s:f:egh";
     static struct option longopts[] = {
+        { "fields",   required_argument, 0, 'f' },
         { "strings",  required_argument, 0, 's' },
         { "format-e", no_argument,       0, 'e' },
         { "format-g", no_argument,       0, 'g' },
@@ -63,6 +66,9 @@ void parse_opts(int *argcp, char ***argvp) {
     int c;
     while ((c = getopt_long(*argcp, *argvp, shortopts, longopts, 0)) != -1) {
         switch(c) {
+            case 'f':
+                fields_arg = optarg;
+                break;
             case 's':
                 strings_file = optarg;
                 break;
@@ -391,6 +397,12 @@ void wait_less() {
     dieif(waitpid(less, &status, 0) == -1, "waitpid failed: %s\n", errstr);
 }
 
+size_t strcnt(char *str, char c) {
+    int n = 0;
+    while (str = strchr(str, c)) { str++; n++; }
+    return n;
+}
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
@@ -501,21 +513,19 @@ int main(int argc, char **argv) {
             return 0;
         }
         case ENCODE: {
-            long long n;
             int string_fields = 0;
-            field_spec_t *specs = malloc(argc*sizeof(field_spec_t));
-            for (n = 0; n < argc; n++) {
-                if (!strcmp(argv[n], "--")) {
-                    specs = realloc(specs, n);
-                    argv++; argc--;
-                    break;
-                }
-                specs[n] = parse_field_spec(argv[n]);
-                if (specs[n].type == STRING) string_fields++;
+            dieif(!fields_arg, "use -f to provide fields\n");
+            long long n = strcnt(fields_arg, ',') + 1;
+            field_spec_t *specs = malloc(n*sizeof(field_spec_t));
+            for (int i = 0; i < n; i++) {
+                char *comma = strchr(fields_arg, ',');
+                if (comma) *comma = '\0';
+                specs[i] = parse_field_spec(fields_arg);
+                if (specs[i].type == STRING) string_fields++;
+                fields_arg = comma + 1;
             }
-            argv += n; argc -= n;
-            write_header(stdout, n, specs);
             if (string_fields) load_strings();
+            write_header(stdout, n, specs);
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
@@ -598,20 +608,32 @@ int main(int argc, char **argv) {
             return 0;
         }
         case SORT: {
-            sort_order = malloc(argc*sizeof(int));
-            for (sort_n = 0; sort_n < argc; sort_n++) {
-                if (!strcmp(argv[sort_n], "--")) {
-                    sort_order = realloc(sort_order, sort_n);
-                    argv++; argc--;
-                    break;
-                }
-                sort_order[sort_n] = atoi(argv[sort_n]);
-            }
-            argv += sort_n; argc -= sort_n;
             dieif(!argc, "sorting stdin not supported\n");
-
             h = read_headers(argc, argv);
             h_size = header_size(h);
+
+            if (!fields_arg) {
+                sort_n = h.field_count;
+                sort_order = malloc(sort_n*sizeof(int));
+                for (int i = 0; i < h.field_count; i++) sort_order[i] = i+1;
+            } else {
+                sort_n = strcnt(fields_arg, ',') + 1;
+                sort_order = calloc(sort_n, sizeof(int));
+                for (int i = 0; i < sort_n; i++) {
+                    int sign = 1;
+                    if (fields_arg[0] == '-') {
+                        fields_arg++;
+                        sign = -1;
+                    }
+                    char *comma = strchr(fields_arg, ',');
+                    if (comma) *comma = '\0';
+                    for (int j = 0; j < h.field_count; j++)
+                        if (!strcmp(fields_arg, h.field_specs[j].name))
+                            sort_order[i] = sign*(j+1);
+                    dieif(!sort_order[i], "invalid field: %s\n", fields_arg);
+                    fields_arg = comma + 1;
+                }
+            }
 
             for (int i = 0; i < argc; i++) {
                 dieif(!strcmp(argv[i], "-"), "sorting stdin not supported\n");
