@@ -555,64 +555,6 @@ int main(int argc, char **argv) {
             }
             return 0;
         }
-        case DISPLAY: {
-            h = read_headers(argc, argv);
-            h_size = header_size(h);
-        display:
-            if (pipe_to_less) fork_less();
-
-            int has_strings = 0;
-            for (int j = 0; j < h.field_count; j++) {
-                if (h.field_specs[j].type == STRING) has_strings = 1;
-                printf(" %20s", h.field_specs[j].name);
-            }
-            printf("\n");
-            for (int j = 0; j < 21*h.field_count+1; j++) printf("-");
-            printf("\n");
-            if (has_strings) load_strings();
-
-            FILE *file;
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                struct stat fs;
-                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
-                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
-                      "seek error for %s: %s\n", argv[i], errstr);
-
-                while (ftello(file) < fs.st_size) {
-                    for (int j = 0; j < h.field_count; j++) {
-                        switch (h.field_specs[j].type) {
-                            case INTEGER: {
-                                long long v;
-                                fread1(&v, sizeof(v), file);
-                                printf(" %20lld", v);
-                                break;
-                            }
-                            case FLOAT: {
-                                double v;
-                                fread1(&v, sizeof(v), file);
-                                printf(float_format, v);
-                                break;
-                            }
-                            case STRING: {
-                                long long v;
-                                fread1(&v, sizeof(v), file);
-                                char *s = index_to_string(v);
-                                printf(" %-20s", s);
-                                break;
-                            }
-                            default:
-                                die("decoding type %s not yet implemented\n",
-                                    typestr(h.field_specs[j].type));
-                        }
-                    }
-                    printf("\n");
-                }
-
-                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
-            }
-            if (pipe_to_less) wait_less();
-            return 0;
-        }
         case CAT: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
@@ -681,6 +623,64 @@ int main(int argc, char **argv) {
                 if (pipe_to_less) goto display;
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
+            return 0;
+        }
+        case DISPLAY: {
+            h = read_headers(argc, argv);
+            h_size = header_size(h);
+        display:
+            if (pipe_to_less) fork_less();
+
+            int has_strings = 0;
+            for (int j = 0; j < h.field_count; j++) {
+                if (h.field_specs[j].type == STRING) has_strings = 1;
+                printf(" %20s", h.field_specs[j].name);
+            }
+            printf("\n");
+            for (int j = 0; j < 21*h.field_count+1; j++) printf("-");
+            printf("\n");
+            if (has_strings) load_strings();
+
+            FILE *file;
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+                struct stat fs;
+                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
+                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
+                      "seek error for %s: %s\n", argv[i], errstr);
+
+                while (ftello(file) < fs.st_size) {
+                    for (int j = 0; j < h.field_count; j++) {
+                        switch (h.field_specs[j].type) {
+                            case INTEGER: {
+                                long long v;
+                                fread1(&v, sizeof(v), file);
+                                printf(" %20lld", v);
+                                break;
+                            }
+                            case FLOAT: {
+                                double v;
+                                fread1(&v, sizeof(v), file);
+                                printf(float_format, v);
+                                break;
+                            }
+                            case STRING: {
+                                long long v;
+                                fread1(&v, sizeof(v), file);
+                                char *s = index_to_string(v);
+                                printf(" %-20s", s);
+                                break;
+                            }
+                            default:
+                                die("decoding type %s not yet implemented\n",
+                                    typestr(h.field_specs[j].type));
+                        }
+                    }
+                    printf("\n");
+                }
+
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
+            }
+            if (pipe_to_less) wait_less();
             return 0;
         }
         case HELP:
