@@ -40,13 +40,13 @@ static const char *const cmdstr =
     "  decode     Decode data from ODB format\n"
     "  cat        Concatenate files with like schemas\n"
     "  cut        Cut selected columns\n"
-    "  slice      Slice rows by offset, stride and count\n"
+    // "  slice      Slice rows by offset, stride and count\n"
     "  paste      Paste columns from different files\n"
     "  join       Join files on specified fields\n"
     "  print      Print data in tabular format\n"
     "  sort       Sort by specified fields (in place)\n"
-    "  rename     Rename fields (in place)\n"
-    "  cast       Cast fields as different types (in place)\n"
+    // "  rename     Rename fields (in place)\n"
+    // "  cast       Cast fields as different types (in place)\n"
     "  help       Print this message\n"
 ;
 
@@ -54,8 +54,8 @@ static const char *const optstr =
     " -f --fields=<fields>   Comma-sparated fields\n"
     " -s --strings=<file>    Use <file> as string index\n"
     " -n --number=<n>        Output at most <n> records\n"
-    " -e --format-e          Use %e to print floats\n"
-    " -g --format-g          Use %g to print floats\n"
+    " -e --float-e           Use %e to print floats\n"
+    " -g --float-g           Use %g to print floats\n"
     " -h --help              Print this message\n"
 ;
 
@@ -68,8 +68,8 @@ void parse_opts(int *argcp, char ***argvp) {
     static struct option longopts[] = {
         { "fields",   required_argument, 0, 'f' },
         { "strings",  required_argument, 0, 's' },
-        { "format-e", no_argument,       0, 'e' },
-        { "format-g", no_argument,       0, 'g' },
+        { "float-e",  no_argument,       0, 'e' },
+        { "float-g",  no_argument,       0, 'g' },
         { "help",     no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
     };
@@ -221,7 +221,9 @@ void write_header(FILE *file, long long n, field_spec_t *specs) {
     fwriten(specs, sizeof(field_spec_t), n, file);
 }
 
-header_t read_header(FILE *file) {
+int string_fields;
+
+header_t read_header(FILE *file, int check_fields) {
     char preamble_b[sizeof(preamble_t)];
     fread1(preamble_b, sizeof(preamble_t), file);
     dieif(memcmp(preamble_b, &preamble, sizeof(preamble_t)), "invalid odb file\n");
@@ -230,13 +232,26 @@ header_t read_header(FILE *file) {
     fread1(&h.field_count, sizeof(h.field_count), file);
     h.field_specs = malloc(h.field_count*sizeof(field_spec_t));
     freadn(h.field_specs, sizeof(field_spec_t), h.field_count, file);
+    if (!check_fields) return h;
+
+    string_fields = 0;
+    for (int i = 0; i < h.field_count; i++) {
+        switch (h.field_specs[i].type) {
+            case INTEGER: case FLOAT: break;
+            case STRING: string_fields++; break;
+            default:
+                die("invalid type: %s (%u)\n",
+                    typestr(h.field_specs[i].type),
+                    h.field_specs[i].type);
+        }
+    }
     return h;
 }
 
 void free_header(header_t h) { free(h.field_specs); }
 
 int check_header(FILE *file, header_t hh) {
-    header_t h = read_header(file);
+    header_t h = read_header(file, 0);
     int match = hh.field_count == h.field_count &&
         !memcmp(hh.field_specs, h.field_specs, h.field_count*sizeof(field_spec_t));
     free_header(h);
@@ -263,7 +278,7 @@ header_t read_headers(int argc, char **argv) {
     header_t h;
     FILE *file;
     for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-        if (i == 0) h = read_header(file);
+        if (i == 0) h = read_header(file, 1);
         else dieif(!check_header(file,h), "field spec mismatch: %s\n", argstr(argv[i]));
     }
     return h;
@@ -535,10 +550,11 @@ int main(int argc, char **argv) {
             return 0;
         }
         case ENCODE: {
-            int string_fields = 0;
             dieif(!fields_arg, "use -f to provide fields\n");
+
             long long n = strcnt(fields_arg, ',') + 1;
             field_spec_t *specs = malloc(n*sizeof(field_spec_t));
+            string_fields = 0;
             for (int i = 0; i < n; i++) {
                 char *comma = strchr(fields_arg, ',');
                 if (comma) *comma = '\0';
@@ -681,7 +697,7 @@ int main(int argc, char **argv) {
             int max_field_count = 0;
             int *field_counts = malloc(argc*sizeof(int));
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                header_t hi = read_header(file);
+                header_t hi = read_header(file, 1);
                 ht.field_specs = realloc(
                     ht.field_specs,
                     (ht.field_count + hi.field_count)*sizeof(field_spec_t)
@@ -784,10 +800,6 @@ int main(int argc, char **argv) {
                 execlp("less", "less", NULL);
                 die("exec failed: %s\n", errstr);
             }
-
-            int string_fields = 0;
-            for (int j = 0; j < h.field_count; j++)
-                if (h.field_specs[j].type == STRING) string_fields++;
             if (string_fields) load_strings();
 
             char *pre, *inter, *post;
@@ -858,14 +870,9 @@ int main(int argc, char **argv) {
                                 break;
                             }
                             case STRING: {
-                                char *s = index_to_string(record[j]);
-                                printf(string_format, s);
+                                printf(string_format, index_to_string(record[j]));
                                 break;
                             }
-                            default:
-                                die("invalid type: %s (%u)\n",
-                                    typestr(h.field_specs[j].type),
-                                    h.field_specs[j].type);
                         }
                         if (j < h.field_count-1) printf("%s", inter);
                     }
