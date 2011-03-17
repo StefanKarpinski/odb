@@ -460,7 +460,8 @@ int main(int argc, char **argv) {
                     if (maxlen < len) maxlen = len;
                     fwrite1(line, len+1, strings);
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fileno(file) && fclose(file),
+                      "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             dieif(!n, "no strings provided\n");
             offsets = realloc(offsets, n*sizeof(off_t));
@@ -593,7 +594,8 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fileno(file) && fclose(file),
+                      "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             return 0;
         }
@@ -604,8 +606,6 @@ int main(int argc, char **argv) {
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                struct stat fs;
-                dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argstr(argv[i]), errstr);
                 dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
                       "seek error for %s: %s\n", argstr(argv[i]), errstr);
 
@@ -618,8 +618,59 @@ int main(int argc, char **argv) {
                     if (r < sizeof(buffer) && feof(file)) break;
                 }
 
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fileno(file) && fclose(file),
+                      "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
+            return 0;
+        }
+        case CUT: {
+            h = read_headers(argc, argv);
+            h_size = header_size(h);
+            // if (pipe_to_print) goto pipe_to_print;
+
+            int n, *cut;
+            if (!fields_arg) {
+                n = h.field_count;
+                cut = malloc(n*sizeof(int));
+                for (int i = 0; i < h.field_count; i++) cut[i] = i;
+            } else {
+                n = strcnt(fields_arg, ',') + 1;
+                cut = malloc(n*sizeof(int));
+                for (int i = 0; i < n; i++) {
+                    char *comma = strchr(fields_arg, ',');
+                    if (comma) *comma = '\0';
+                    cut[i] = -1;
+                    for (int j = 0; j < h.field_count; j++)
+                        if (!strcmp(fields_arg, h.field_specs[j].name))
+                            cut[i] = j;
+                    dieif(cut[i] == -1, "invalid field: %s\n", fields_arg);
+                    fields_arg = comma + 1;
+                }
+            }
+
+            field_spec_t *specs = malloc(n*sizeof(field_spec_t));
+            for (int i = 0; i < n; i++) specs[i] = h.field_specs[cut[i]];
+            write_header(stdout, n, specs);
+            free(specs);
+
+            FILE *file;
+            long long *record = malloc(h.field_count*sizeof(long long));
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
+                      "seek error for %s: %s\n", argstr(argv[i]), errstr);
+
+                for (;;) {
+                    int r = fread(record, sizeof(long long), h.field_count, file);
+                    if (!r && feof(file)) break;
+                    dieif(r < h.field_count, "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                    for (int j = 0; j < n; j++)
+                        fwrite1(record + cut[j], sizeof(long long), stdout);
+                }
+
+                dieif(fileno(file) && fclose(file),
+                      "error closing %s: %s\n", argstr(argv[i]), errstr);
+            }
+            if (pipe_to_less) wait_less();
             return 0;
         }
         case SORT: {
@@ -739,7 +790,8 @@ int main(int argc, char **argv) {
                     printf("\n");
                 }
 
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fileno(file) && fclose(file),
+                      "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             if (pipe_to_less) wait_less();
             return 0;
