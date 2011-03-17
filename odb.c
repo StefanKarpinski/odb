@@ -780,15 +780,41 @@ int main(int argc, char **argv) {
             }
 
             int string_fields = 0;
-            for (int j = 0; j < h.field_count; j++) {
-                printf(" %20s", h.field_specs[j].name);
+            for (int j = 0; j < h.field_count; j++)
                 if (h.field_specs[j].type == STRING) string_fields++;
-            }
-            printf("\n");
             if (string_fields) load_strings();
+
+            for (int j = 0; j < h.field_count; j++) {
+                char *name = h.field_specs[j].name;
+                size_t len = strlen(name);
+                switch (h.field_specs[j].type) {
+                    case INTEGER: {
+                        int space = 21 - strlen(name);
+                        for (int k = 0; k < space; k++) putchar(' ');
+                        fwriten(name, 1, len, stdout);
+                        break;
+                    }
+                    case FLOAT: {
+                        int space = 21 - strlen(name);
+                        for (int k = 0; k < space-7; k++) putchar(' ');
+                        fwriten(name, 1, len, stdout);
+                        for (int k = 0; k < 7; k++) putchar(' ');
+                        break;
+                    }
+                    case STRING: {
+                        int space = string_maxlen + 1 - strlen(name);
+                        putchar(' ');
+                        fwriten(name, 1, len, stdout);
+                        for (int k = 0; k < space-1; k++) putchar(' ');
+                        break;
+                    }
+                }
+            }
+            putchar('\n');
+
             int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
-            for (int j = 0; j < dashes; j++) printf("-");
-            printf("\n");
+            for (int j = 0; j < dashes; j++) putchar('-');
+            putchar('\n');
             char *string_format;
             asprintf(&string_format, " %%-%ds", string_maxlen);
 
@@ -828,7 +854,7 @@ int main(int argc, char **argv) {
                                     h.field_specs[j].type);
                         }
                     }
-                    printf("\n");
+                    putchar('\n');
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
