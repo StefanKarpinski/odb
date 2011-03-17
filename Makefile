@@ -1,7 +1,7 @@
-CFLAGS = -g3 -std=gnu99
+CFLAGS = -g3
 
 odb: odb.c smoothsort.o
-	gcc $(CFLAGS) $^ -o $@ -lcmph
+	gcc $(CFLAGS) -std=gnu99 $^ -o $@ -lcmph
 
 %.o: %.c %.h
 	gcc $(CFLAGS) -c $< -o $@
@@ -9,4 +9,4 @@ odb: odb.c smoothsort.o
 clean:
 	rm -rf odb odb.dSYM *.o
 
-.PHONY: clean test-encode
+.PHONY: clean
