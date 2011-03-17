@@ -578,11 +578,11 @@ int main(int argc, char **argv) {
                                 break;
                             }
                             case STRING: {
-                                off_t len = buffer + length - line;
+                                off_t len = buffer+length-line-1;
                                 if (j < n-1) {
                                     char *end = memchr(line, '\t', len);
                                     dieif(!end, "tab expected after: %s\n", ltrunc(line));
-                                    len = end - line;
+                                    len = end-line;
                                 }
                                 long long v = string_to_index(line, len);
                                 fwrite1(&v, sizeof(v), stdout);
