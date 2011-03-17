@@ -420,8 +420,15 @@ int main(int argc, char **argv) {
     argv++; argc--;
 
     int is_tty = isatty(fileno(stdout));
+
     if (cmd == CAT)
         cmd = fields_arg ? CUT : is_tty ? PRINT : CAT;
+
+    if (cmd == CUT && is_tty && !fork_child()) {
+        argc = 0;
+        argv = NULL;
+        cmd = PRINT;
+    }
 
     switch (cmd) {
         case STRINGS: {
@@ -617,12 +624,6 @@ int main(int argc, char **argv) {
             return 0;
         }
         case CUT: {
-            if (is_tty && !fork_child()) {
-                argc = 0;
-                argv = NULL;
-                goto print_before_headers;
-            }
-
             h = read_headers(argc, argv);
             h_size = header_size(h);
 
@@ -717,17 +718,18 @@ int main(int argc, char **argv) {
                 size_t n = (fs.st_size-h_size)/(h.field_count*sizeof(long long));
                 su_smoothsort(data, 0, n, lt_records, swap_records);
 
-                dieif(munmap(mapped, fs.st_size), "munmap failed for %s: %s\n", argv[i], errstr);
-                if (is_tty && argc == 1) goto print_after_headers;
+                dieif(munmap(mapped, fs.st_size),
+                      "munmap failed for %s: %s\n", argv[i], errstr);
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
-            return 0;
+            if (!is_tty) return 0;
+            free(files);
+            files = NULL;
+            // intentional fall-through
         }
         case PRINT: {
-        print_before_headers:
             h = read_headers(argc, argv);
             h_size = header_size(h);
-        print_after_headers:
             if (is_tty && !fork_child()) {
                 execlp("less", "less", NULL);
                 die("exec failed: %s\n", errstr);
