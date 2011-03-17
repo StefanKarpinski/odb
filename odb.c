@@ -29,6 +29,8 @@
 
 #define dieif(cond,fmt,args...) if (cond) die(fmt,##args);
 
+int main(int argc, char **argv);
+
 static const char *const usage =
     "usage: odb [command] [options] [arguments...]";
 
@@ -381,35 +383,33 @@ char *index_to_string(long long index) {
     return str;
 }
 
-pid_t less = 0;
+typedef void (*fork_callback_t)(void);
 
-pid_t fork_less() {
+pid_t fork_child() {
     int fd[2];
     dieif(pipe(fd), "pipe failed: %s\n", errstr);
-    less = fork();
-    dieif(less == -1, "fork failed: %s\n", errstr);
-    if (less) {
+    pid_t pid = fork();
+    dieif(pid == -1, "fork failed: %s\n", errstr);
+    if (pid) {
         dieif(close(fd[0]), "close failed: %s\n", errstr);
         dieif(dup2(fd[1], fileno(stdout)) == -1, "dup2 failed: %s\n", errstr);
         dieif(dup2(fd[1], fileno(stderr)) == -1, "dup2 failed: %s\n", errstr);
         dieif(close(fd[1]), "close failed: %s\n", errstr);
-        return less;
     } else {
         dieif(close(fd[1]), "close failed: %s\n", errstr);
         dieif(dup2(fd[0], fileno(stdin)) == -1, "dup2 failed: %s\n", errstr);
         dieif(close(fd[0]), "close failed: %s\n", errstr);
-        execlp("less", "less", NULL);
-        die("exec failed: %s\n", errstr);
     }
+    return pid;
 }
 
-void wait_less() {
+void wait_child() {
     dieif(fflush(stdout), "fflush error: %s\n", errstr);
     dieif(fflush(stderr), "fflush error: %s\n", errstr);
     dieif(fclose(stdout), "close failed: %s\n", errstr);
     dieif(fclose(stderr), "close failed: %s\n", errstr);
     int status;
-    dieif(waitpid(less, &status, 0) == -1, "waitpid failed: %s\n", errstr);
+    dieif(wait(&status) == -1, "wait failed: %s\n", errstr);
 }
 
 size_t strcnt(char *str, char c) {
@@ -426,8 +426,7 @@ int main(int argc, char **argv) {
     argv++; argc--;
 
     int is_tty = isatty(1);
-    if (cmd == CAT && is_tty) cmd = PRINT;
-    int pipe_to_less = is_tty && (cmd == PRINT || cmd == SORT);
+    if (is_tty && cmd == CAT) cmd = PRINT;
 
     switch (cmd) {
         case STRINGS: {
@@ -632,7 +631,6 @@ int main(int argc, char **argv) {
         case CUT: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
-            // if (pipe_to_print) goto pipe_to_print;
 
             int n, *cut;
             if (!fields_arg) {
@@ -656,7 +654,18 @@ int main(int argc, char **argv) {
 
             field_spec_t *specs = malloc(n*sizeof(field_spec_t));
             for (int i = 0; i < n; i++) specs[i] = h.field_specs[cut[i]];
-            write_header(stdout, n, specs);
+            if (is_tty) {
+                if (!fork_child()) {
+                    h.field_count = n;
+                    free(h.field_specs);
+                    h.field_specs = specs;
+                    argc = 0;
+                    argv = NULL;
+                    goto print;
+                }
+            } else {
+                write_header(stdout, n, specs);
+            }
             free(specs);
 
             FILE *file;
@@ -676,7 +685,7 @@ int main(int argc, char **argv) {
                 dieif(fileno(file) && fclose(file),
                       "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
-            if (pipe_to_less) wait_less();
+            if (is_tty) wait_child();
             return 0;
         }
         case SORT: {
@@ -731,7 +740,7 @@ int main(int argc, char **argv) {
                 su_smoothsort(data, 0, n, lt_records, swap_records);
 
                 dieif(munmap(mapped, fs.st_size), "munmap failed for %s: %s\n", argv[i], errstr);
-                if (pipe_to_less) goto print;
+                if (is_tty && argc == 1) goto print;
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             return 0;
@@ -740,7 +749,10 @@ int main(int argc, char **argv) {
             h = read_headers(argc, argv);
             h_size = header_size(h);
         print:
-            if (pipe_to_less) fork_less();
+            if (is_tty && !fork_child()) {
+                execlp("less", "less", NULL);
+                die("exec failed: %s\n", errstr);
+            }
 
             int string_fields = 0;
             for (int j = 0; j < h.field_count; j++) {
@@ -789,8 +801,9 @@ int main(int argc, char **argv) {
                                 break;
                             }
                             default:
-                                die("decoding type %s not yet implemented\n",
-                                    typestr(h.field_specs[j].type));
+                                die("invalid type: %s (%u)\n",
+                                    typestr(h.field_specs[j].type),
+                                    h.field_specs[j].type);
                         }
                     }
                     printf("\n");
@@ -799,7 +812,7 @@ int main(int argc, char **argv) {
                 dieif(fileno(file) && fclose(file),
                       "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
-            if (pipe_to_less) wait_less();
+            if (is_tty) wait_child();
             return 0;
         }
         case HELP:
