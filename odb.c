@@ -38,12 +38,12 @@ static const char *const cmdstr =
     "  strings    Generate strings index\n"
     "  encode     Encode data to ODB format\n"
     "  decode     Decode data from ODB format\n"
+    "  print      Print data in tabular format\n"
     "  cat        Concatenate files with like schemas\n"
     "  cut        Cut selected columns\n"
  // "  slice      Slice rows by offset, stride and count\n"
     "  paste      Paste columns from different files\n"
     "  join       Join files on specified fields\n"
-    "  print      Print data in tabular format\n"
     "  sort       Sort by specified fields (in place)\n"
  // "  rename     Rename fields (in place)\n"
  // "  cast       Cast fields as different types (in place)\n"
@@ -105,12 +105,12 @@ typedef enum {
     STRINGS,
     ENCODE,
     DECODE,
+    PRINT,
     CAT,
     CUT,
     SLICE,
     PASTE,
     JOIN,
-    PRINT,
     SORT,
     RENAME,
     CAST,
@@ -122,12 +122,12 @@ cmd_t parse_cmd(char *str) {
     return !strcmp(str, "strings") ? STRINGS :
            !strcmp(str, "encode")  ? ENCODE  :
            !strcmp(str, "decode")  ? DECODE  :
+           !strcmp(str, "print")   ? PRINT   :
            !strcmp(str, "cat")     ? CAT     :
            !strcmp(str, "cut")     ? CUT     :
            !strcmp(str, "slice")   ? SLICE   :
            !strcmp(str, "paste")   ? PASTE   :
            !strcmp(str, "join")    ? JOIN    :
-           !strcmp(str, "print")   ? PRINT   :
            !strcmp(str, "sort")    ? SORT    :
            !strcmp(str, "rename")  ? RENAME  :
            !strcmp(str, "cast")    ? CAST    :
@@ -830,14 +830,16 @@ int main(int argc, char **argv) {
                             int space = 21 - strlen(name);
                             for (int k = 0; k < space-7; k++) putchar(' ');
                             fwriten(name, 1, len, stdout);
-                            for (int k = 0; k < 7; k++) putchar(' ');
+                            if (j < h.field_count-1)
+                                for (int k = 0; k < 7; k++) putchar(' ');
                             break;
                         }
                         case STRING: {
                             int space = string_maxlen + 1 - strlen(name);
                             putchar(' ');
                             fwriten(name, 1, len, stdout);
-                            for (int k = 0; k < space-1; k++) putchar(' ');
+                            if (j < h.field_count-1)
+                                for (int k = 0; k < space-1; k++) putchar(' ');
                             break;
                         }
                     }
