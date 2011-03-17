@@ -234,14 +234,18 @@ int check_header(FILE *file, header_t hh) {
     return match;
 }
 
+FILE **files = NULL;
+
 FILE *fopenr_arg(int argc, char **argv, int i) {
+    if (!files) files = calloc(argc, sizeof(FILE*));
     if (argc == 0 && i == 0)    return stdin;
     if (argc <= i)              return NULL;
-    if (!strcmp(argv[i], "-"))  return stdin;
+    if (files[i])               return files[i];
+    if (!strcmp(argv[i], "-"))  return files[i] = stdin;
 
     FILE *file = fopen(argv[i], "r");
     dieif(!file, "error opening %s: %s\n", argv[i], errstr);
-    return file;
+    return files[i] = file;
 }
 
 char *argstr(char *arg) { arg ? arg : "-"; }
@@ -249,15 +253,9 @@ char *argstr(char *arg) { arg ? arg : "-"; }
 header_t read_headers(int argc, char **argv) {
     header_t h;
     FILE *file;
-    int stdin_seen = 0;
     for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-        if (!fileno(file)) {
-            if (stdin_seen) continue;
-            stdin_seen = 1;
-        }
         if (i == 0) h = read_header(file);
         else dieif(!check_header(file,h), "field spec mismatch: %s\n", argstr(argv[i]));
-        if (fileno(file)) dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
     }
     return h;
 }
@@ -421,8 +419,9 @@ int main(int argc, char **argv) {
     cmd_t cmd = parse_cmd(argv[0]);
     argv++; argc--;
 
-    int is_tty = isatty(1);
-    if (is_tty && cmd == CAT) cmd = PRINT;
+    int is_tty = isatty(fileno(stdout));
+    if (cmd == CAT)
+        cmd = fields_arg ? CUT : is_tty ? PRINT : CAT;
 
     switch (cmd) {
         case STRINGS: {
@@ -455,8 +454,7 @@ int main(int argc, char **argv) {
                     if (maxlen < len) maxlen = len;
                     fwrite1(line, len+1, strings);
                 }
-                dieif(fileno(file) && fclose(file),
-                      "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             dieif(!n, "no strings provided\n");
             offsets = realloc(offsets, n*sizeof(off_t));
@@ -595,8 +593,7 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
-                dieif(fileno(file) && fclose(file),
-                      "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             return 0;
         }
@@ -607,9 +604,6 @@ int main(int argc, char **argv) {
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
-                      "seek error for %s: %s\n", argstr(argv[i]), errstr);
-
                 for (;;) {
                     char buffer[1<<15];
                     size_t r = fread(buffer, 1, sizeof(buffer), file);
@@ -618,13 +612,17 @@ int main(int argc, char **argv) {
                     dieif(w < r && ferror(stdout), "write error: %s\n", errstr);
                     if (r < sizeof(buffer) && feof(file)) break;
                 }
-
-                dieif(fileno(file) && fclose(file),
-                      "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             return 0;
         }
         case CUT: {
+            if (is_tty && !fork_child()) {
+                argc = 0;
+                argv = NULL;
+                goto print_before_headers;
+            }
+
             h = read_headers(argc, argv);
             h_size = header_size(h);
 
@@ -650,26 +648,12 @@ int main(int argc, char **argv) {
 
             field_spec_t *specs = malloc(n*sizeof(field_spec_t));
             for (int i = 0; i < n; i++) specs[i] = h.field_specs[cut[i]];
-            if (is_tty) {
-                if (!fork_child()) {
-                    h.field_count = n;
-                    free(h.field_specs);
-                    h.field_specs = specs;
-                    argc = 0;
-                    argv = NULL;
-                    goto print;
-                }
-            } else {
-                write_header(stdout, n, specs);
-            }
+            write_header(stdout, n, specs);
             free(specs);
 
             FILE *file;
             long long *record = malloc(h.field_count*sizeof(long long));
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
-                      "seek error for %s: %s\n", argstr(argv[i]), errstr);
-
                 for (;;) {
                     int r = fread(record, sizeof(long long), h.field_count, file);
                     if (!r && feof(file)) break;
@@ -677,9 +661,7 @@ int main(int argc, char **argv) {
                     for (int j = 0; j < n; j++)
                         fwrite1(record + cut[j], sizeof(long long), stdout);
                 }
-
-                dieif(fileno(file) && fclose(file),
-                      "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             if (is_tty) wait_child();
             return 0;
@@ -736,15 +718,16 @@ int main(int argc, char **argv) {
                 su_smoothsort(data, 0, n, lt_records, swap_records);
 
                 dieif(munmap(mapped, fs.st_size), "munmap failed for %s: %s\n", argv[i], errstr);
-                if (is_tty && argc == 1) goto print;
+                if (is_tty && argc == 1) goto print_after_headers;
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             return 0;
         }
         case PRINT: {
+        print_before_headers:
             h = read_headers(argc, argv);
             h_size = header_size(h);
-        print:
+        print_after_headers:
             if (is_tty && !fork_child()) {
                 execlp("less", "less", NULL);
                 die("exec failed: %s\n", errstr);
@@ -765,9 +748,6 @@ int main(int argc, char **argv) {
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                dieif(fileno(file) && fseeko(file, h_size, SEEK_SET),
-                      "seek error for %s: %s\n", argstr(argv[i]), errstr);
-
                 for (;;) {
                     int c = getc(file);
                     if (c == EOF) {
@@ -804,9 +784,7 @@ int main(int argc, char **argv) {
                     }
                     printf("\n");
                 }
-
-                dieif(fileno(file) && fclose(file),
-                      "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
             if (is_tty) wait_child();
             return 0;
