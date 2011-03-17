@@ -421,7 +421,7 @@ int main(int argc, char **argv) {
 
     int is_tty = isatty(fileno(stdout));
     if (cmd == CAT) cmd = fields_arg ? CUT : is_tty ? PRINT : CAT;
-    if ((cmd == CUT || cmd == PASTE) && is_tty && !fork_child()) {
+    if (is_tty && (cmd == CUT || cmd == PASTE || cmd == ENCODE) && !fork_child()) {
         argc = 0;
         argv = NULL;
         cmd = PRINT;
@@ -599,6 +599,7 @@ int main(int argc, char **argv) {
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
+            if (is_tty) wait_child();
             return 0;
         }
         case CAT: {
