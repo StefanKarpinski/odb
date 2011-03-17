@@ -40,13 +40,13 @@ static const char *const cmdstr =
     "  decode     Decode data from ODB format\n"
     "  cat        Concatenate files with like schemas\n"
     "  cut        Cut selected columns\n"
-    // "  slice      Slice rows by offset, stride and count\n"
+ // "  slice      Slice rows by offset, stride and count\n"
     "  paste      Paste columns from different files\n"
     "  join       Join files on specified fields\n"
     "  print      Print data in tabular format\n"
     "  sort       Sort by specified fields (in place)\n"
-    // "  rename     Rename fields (in place)\n"
-    // "  cast       Cast fields as different types (in place)\n"
+ // "  rename     Rename fields (in place)\n"
+ // "  cast       Cast fields as different types (in place)\n"
     "  help       Print this message\n"
 ;
 
@@ -145,7 +145,7 @@ char *typestr(field_type_t type) {
         case INTEGER: return "int";
         case FLOAT:   return "float";
         case STRING:  return "string";
-        default:      return "unknown";
+        default:      return "(unknown)";
     }
 }
 
@@ -808,7 +808,7 @@ int main(int argc, char **argv) {
             if (cmd == DECODE) {
                 pre = ""; inter = "\t"; post = "\n";
                 integer_format = "%lld";
-                float_format = "%.10f";
+                asprintf(&float_format, "%%.6%c", float_format_char);
                 string_format = "%s";
             } else {
                 pre = " "; inter = " "; post = "\n";
