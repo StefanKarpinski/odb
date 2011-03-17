@@ -25,7 +25,7 @@
 #define die(fmt,args...)      { fflush(stdout); fsync(fileno(stdout)); \
                                 fprintf(stderr,fmt,##args);            \
                                 fflush(stderr); fsync(fileno(stderr)); \
-                                exit(1); }
+                                fclose(stderr); exit(1); }
 
 #define dieif(cond,fmt,args...) if (cond) die(fmt,##args);
 
@@ -41,7 +41,7 @@ static const char *const cmdstr =
     "  print      Print data in tabular format\n"
     "  cat        Concatenate files with like schemas\n"
     "  cut        Cut selected columns\n"
- // "  slice      Slice rows by offset, stride and count\n"
+    "  slice      Slice rows by offset, stride and count\n"
     "  paste      Paste columns from different files\n"
     "  join       Join files on specified fields\n"
     "  sort       Sort by specified fields (in place)\n"
@@ -51,26 +51,33 @@ static const char *const cmdstr =
 ;
 
 static const char *const optstr =
-    " -f --fields=<fields>   Comma-sparated fields\n"
-    " -s --strings=<file>    Use <file> as string index\n"
-    " -n --number=<n>        Output at most <n> records\n"
-    " -e --float-e           Use %e to print floats\n"
-    " -g --float-g           Use %g to print floats\n"
-    " -h --help              Print this message\n"
+    " -f --fields=<fields>      Comma-sparated fields\n"
+    " -s --strings=<file>       Use <file> as string index\n"
+    " -r --range=<range>        Output a range slice of records\n"
+    " -n --count=<n>            Output at most <n> records\n"
+    " -N --line-numbers[=<b>]   Output with line numbers\n"
+    " -e --float-e              Use %e to print floats\n"
+    " -g --float-g              Use %g to print floats\n"
+    " -h --help                 Print this message\n"
 ;
 
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
+static int print_line_numbers = 0;
+static long long line_number = 1;
 static char float_format_char = 'f';
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "s:f:egh";
+    static char* shortopts = "f:s:r:n:N::egh";
     static struct option longopts[] = {
-        { "fields",   required_argument, 0, 'f' },
-        { "strings",  required_argument, 0, 's' },
-        { "float-e",  no_argument,       0, 'e' },
-        { "float-g",  no_argument,       0, 'g' },
-        { "help",     no_argument,       0, 'h' },
+        { "fields",         required_argument, 0, 'f' },
+        { "strings",        required_argument, 0, 's' },
+        { "range",          required_argument, 0, 'r' },
+        { "count",          required_argument, 0, 'n' },
+        { "line-numbers",   optional_argument, 0, 'N' },
+        { "float-e",        no_argument,       0, 'e' },
+        { "float-g",        no_argument,       0, 'g' },
+        { "help",           no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
     };
     int c;
@@ -81,6 +88,16 @@ void parse_opts(int *argcp, char ***argvp) {
                 break;
             case 's':
                 strings_file = optarg;
+                break;
+            case 'r':
+                // TODO: parse range
+                break;
+            case 'n':
+                // TODO: parse count
+                break;
+            case 'N':
+                print_line_numbers = 1;
+                if (optarg) line_number = atoi(optarg);
                 break;
             case 'e':
                 float_format_char = 'e';
@@ -106,8 +123,6 @@ typedef enum {
     ENCODE,
     DECODE,
     PRINT,
-    CAT,
-    CUT,
     SLICE,
     PASTE,
     JOIN,
@@ -123,8 +138,8 @@ cmd_t parse_cmd(char *str) {
            !strcmp(str, "encode")  ? ENCODE  :
            !strcmp(str, "decode")  ? DECODE  :
            !strcmp(str, "print")   ? PRINT   :
-           !strcmp(str, "cat")     ? CAT     :
-           !strcmp(str, "cut")     ? CUT     :
+           !strcmp(str, "cat")     ? SLICE   :
+           !strcmp(str, "cut")     ? SLICE   :
            !strcmp(str, "slice")   ? SLICE   :
            !strcmp(str, "paste")   ? PASTE   :
            !strcmp(str, "join")    ? JOIN    :
@@ -403,7 +418,7 @@ char *index_to_string(long long index) {
 
 typedef void (*fork_callback_t)(void);
 
-pid_t fork_child() {
+pid_t fork_child(int redirect_stderr) {
     int fd[2];
     dieif(pipe(fd), "pipe failed: %s\n", errstr);
     pid_t pid = fork();
@@ -411,7 +426,8 @@ pid_t fork_child() {
     if (pid) {
         dieif(close(fd[0]), "close failed: %s\n", errstr);
         dieif(dup2(fd[1], fileno(stdout)) == -1, "dup2 failed: %s\n", errstr);
-        dieif(dup2(fd[1], fileno(stderr)) == -1, "dup2 failed: %s\n", errstr);
+        if (redirect_stderr)
+            dieif(dup2(fd[1], fileno(stderr)) == -1, "dup2 failed: %s\n", errstr);
         dieif(close(fd[1]), "close failed: %s\n", errstr);
     } else {
         dieif(close(fd[1]), "close failed: %s\n", errstr);
@@ -436,6 +452,8 @@ size_t strcnt(char *str, char c) {
     return n;
 }
 
+#define printable(cmd) (cmd == ENCODE || cmd == SLICE || cmd == PASTE)
+
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
     dieif(argc < 1, "usage: %s\n", usage);
@@ -444,8 +462,7 @@ int main(int argc, char **argv) {
     argv++; argc--;
 
     int is_tty = isatty(fileno(stdout));
-    if (cmd == CAT) cmd = fields_arg ? CUT : is_tty ? PRINT : CAT;
-    if (is_tty && (cmd == CUT || cmd == PASTE || cmd == ENCODE) && !fork_child()) {
+    if (is_tty && printable(cmd) && !fork_child(0)) {
         argc = 0;
         argv = NULL;
         cmd = PRINT;
@@ -627,26 +644,7 @@ int main(int argc, char **argv) {
             if (is_tty) wait_child();
             return 0;
         }
-        case CAT: {
-            h = read_headers(argc, argv);
-            h_size = header_size(h);
-            write_header(stdout, h.field_count, h.field_specs);
-
-            FILE *file;
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                for (;;) {
-                    char buffer[1<<15];
-                    size_t r = fread(buffer, 1, sizeof(buffer), file);
-                    dieif(ferror(file), "error reading %s: %s\n", argstr(argv[i]), errstr);
-                    size_t w = fwrite(buffer, 1, r, stdout);
-                    dieif(w < r && ferror(stdout), "write error: %s\n", errstr);
-                    if (r < sizeof(buffer) && feof(file)) break;
-                }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
-            }
-            return 0;
-        }
-        case CUT: {
+        case SLICE: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
 
@@ -796,7 +794,7 @@ int main(int argc, char **argv) {
         case PRINT: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
-            if (is_tty && !fork_child()) {
+            if (is_tty && !fork_child(1)) {
                 execlp("less", "less", NULL);
                 die("exec failed: %s\n", errstr);
             }
@@ -806,15 +804,20 @@ int main(int argc, char **argv) {
             char *integer_format, *float_format, *string_format;
 
             if (cmd == DECODE) {
-                pre = ""; inter = "\t"; post = "\n";
+                pre = print_line_numbers ? "%lld\t" : "";
+                inter = "\t"; post = "\n";
                 integer_format = "%lld";
                 asprintf(&float_format, "%%.6%c", float_format_char);
                 string_format = "%s";
             } else {
-                pre = " "; inter = " "; post = "\n";
+                pre = print_line_numbers ? "%8lld:    " : " ";
+                inter = " "; post = "\n";
                 integer_format = "%20lld";
                 asprintf(&float_format, "%%20.6%c", float_format_char);
                 asprintf(&string_format, "%%-%ds", string_maxlen);
+
+                if (print_line_numbers)
+                    for (int k = 0; k < 12; k++) putchar(' ');
 
                 for (int j = 0; j < h.field_count; j++) {
                     char *name = h.field_specs[j].name;
@@ -847,6 +850,7 @@ int main(int argc, char **argv) {
                 putchar('\n');
 
                 int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
+                if (print_line_numbers) dashes += 12;
                 for (int j = 0; j < dashes; j++) putchar('-');
                 putchar('\n');
 
@@ -860,7 +864,7 @@ int main(int argc, char **argv) {
                     if (!r && feof(file)) break;
                     dieif(r < h.field_count,
                           "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
-                    if (*pre) printf("%s", pre);
+                    if (*pre) printf(pre, line_number++);
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
                             case INTEGER: {
