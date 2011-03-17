@@ -420,11 +420,8 @@ int main(int argc, char **argv) {
     argv++; argc--;
 
     int is_tty = isatty(fileno(stdout));
-
-    if (cmd == CAT)
-        cmd = fields_arg ? CUT : is_tty ? PRINT : CAT;
-
-    if (cmd == CUT && is_tty && !fork_child()) {
+    if (cmd == CAT) cmd = fields_arg ? CUT : is_tty ? PRINT : CAT;
+    if ((cmd == CUT || cmd == PASTE) && is_tty && !fork_child()) {
         argc = 0;
         argv = NULL;
         cmd = PRINT;
@@ -658,11 +655,53 @@ int main(int argc, char **argv) {
                 for (;;) {
                     int r = fread(record, sizeof(long long), h.field_count, file);
                     if (!r && feof(file)) break;
-                    dieif(r < h.field_count, "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                    dieif(r < h.field_count,
+                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
                     for (int j = 0; j < n; j++)
                         fwrite1(record + cut[j], sizeof(long long), stdout);
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+            }
+            if (is_tty) wait_child();
+            return 0;
+        }
+        case PASTE: {
+            FILE *file;
+            header_t ht = {0, NULL};
+            int max_field_count = 0;
+            int *field_counts = malloc(argc*sizeof(int));
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+                header_t hi = read_header(file);
+                ht.field_specs = realloc(
+                    ht.field_specs,
+                    (ht.field_count + hi.field_count)*sizeof(field_spec_t)
+                );
+                memcpy(
+                    ht.field_specs + ht.field_count,
+                    hi.field_specs, hi.field_count*sizeof(field_spec_t)
+                );
+                ht.field_count += hi.field_count;
+                field_counts[i] = hi.field_count;
+                if (max_field_count < hi.field_count)
+                    max_field_count = hi.field_count;
+                free_header(hi);
+            }
+            write_header(stdout, ht.field_count, ht.field_specs);
+            long long *record = malloc(max_field_count*sizeof(long long));
+            for (;;) {
+                int done = 0;
+                for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+                    int r = fread(record, sizeof(long long), field_counts[i], file);
+                    if (!r && feof(file)) {
+                        done++;
+                        continue;
+                    };
+                    dieif(r < field_counts[i],
+                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                    fwriten(record, sizeof(long long), field_counts[i], stdout);
+                }
+                dieif(done && done < argc, "unequal records in inputs\n");
+                if (done) break;
             }
             if (is_tty) wait_child();
             return 0;
