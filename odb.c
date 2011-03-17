@@ -29,31 +29,29 @@
 
 #define dieif(cond,fmt,args...) if (cond) die(fmt,##args);
 
-int main(int argc, char **argv);
-
 static const char *const usage =
     "usage: odb [command] [options] [arguments...]";
 
 static const char *const cmdstr =
-    "  strings              Generate strings index\n"
-    "  encode               Encode data to ODB format\n"
-    "  cat                  Concatenate files with like schemas\n"
-    "  cut                  Cut selected columns\n"
-    "  paste                Paste columns from different files\n"
-    "  join                 Join files on specified fields\n"
-    "  print                Print data in tabular format\n"
-    "  sort                 Sort by specified fields (in place)\n"
-    "  rename               Rename fields (in place)\n"
-    "  cast                 Cast fields as different types (in place)\n"
-    "  help                 Print this message\n"
+    "  strings    Generate strings index\n"
+    "  encode     Encode data to ODB format\n"
+    "  cat        Concatenate files with like schemas\n"
+    "  cut        Cut selected columns\n"
+    "  paste      Paste columns from different files\n"
+    "  join       Join files on specified fields\n"
+    "  print      Print data in tabular format\n"
+    "  sort       Sort by specified fields (in place)\n"
+    "  rename     Rename fields (in place)\n"
+    "  cast       Cast fields as different types (in place)\n"
+    "  help       Print this message\n"
 ;
 
 static const char *const optstr =
-    " -f --fields=<fields>  Comma-sparated fields\n"
-    " -s --strings=<file>   Use <file> as string index\n"
-    " -e --format-e         Use %e to print floats\n"
-    " -g --format-g         Use %g to print floats\n"
-    " -h --help             Print this message\n"
+    " -f --fields=<fields>   Comma-sparated fields\n"
+    " -s --strings=<file>    Use <file> as string index\n"
+    " -e --format-e          Use %e to print floats\n"
+    " -g --format-g          Use %g to print floats\n"
+    " -h --help              Print this message\n"
 ;
 
 static char *fields_arg = NULL;
@@ -98,8 +96,6 @@ void parse_opts(int *argcp, char ***argvp) {
     *argcp -= optind;
 }
 
-const int INVALID = -1;
-
 typedef enum {
     STRINGS,
     ENCODE,
@@ -111,7 +107,8 @@ typedef enum {
     SORT,
     RENAME,
     CAST,
-    HELP
+    HELP,
+    INVALID
 } cmd_t;
 
 cmd_t parse_cmd(char *str) {
@@ -165,9 +162,8 @@ field_spec_t parse_field_spec(const char *const str) {
     memcpy(spec.name, str, n);
     spec.type = !strcmp(colon, "int")    ? INTEGER :
                 !strcmp(colon, "float")  ? FLOAT   :
-                !strcmp(colon, "string") ? STRING  :
-                                           INVALID ;
-    dieif(spec.type == INVALID, "invalid field type: %s\n", colon);
+                !strcmp(colon, "string") ? STRING  : -1;
+    dieif(spec.type < 0, "invalid field type: %s\n", colon);
     return spec;
 }
 
@@ -818,7 +814,9 @@ int main(int argc, char **argv) {
         case HELP:
             printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
             return 0;
-        default:
+        case INVALID:
             die("invalid command: %s\n", argv[-1]);
+        default:
+            die("command not implemented: %s\n", argv[-1]);
     }
 }
