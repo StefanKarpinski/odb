@@ -29,12 +29,15 @@
 
 #define dieif(cond,fmt,args...) if (cond) die(fmt,##args);
 
+#define reinterpret(type,value) *((type*)&value)
+
 static const char *const usage =
     "usage: odb [command] [options] [arguments...]";
 
 static const char *const cmdstr =
     "  strings    Generate strings index\n"
     "  encode     Encode data to ODB format\n"
+    "  decode     Decode data from ODB format\n"
     "  cat        Concatenate files with like schemas\n"
     "  cut        Cut selected columns\n"
     "  slice      Slice rows by offset, stride and count\n"
@@ -58,7 +61,7 @@ static const char *const optstr =
 
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
-static char *float_format = " %20.6f";
+static char float_format_char = 'f';
 
 void parse_opts(int *argcp, char ***argvp) {
     static char* shortopts = "s:f:egh";
@@ -80,10 +83,10 @@ void parse_opts(int *argcp, char ***argvp) {
                 strings_file = optarg;
                 break;
             case 'e':
-                float_format = " %20.6e";
+                float_format_char = 'e';
                 break;
             case 'g':
-                float_format = " %20.6g";
+                float_format_char = 'g';
                 break;
             case 'h':
                 printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
@@ -101,6 +104,7 @@ void parse_opts(int *argcp, char ***argvp) {
 typedef enum {
     STRINGS,
     ENCODE,
+    DECODE,
     CAT,
     CUT,
     SLICE,
@@ -117,6 +121,7 @@ typedef enum {
 cmd_t parse_cmd(char *str) {
     return !strcmp(str, "strings") ? STRINGS :
            !strcmp(str, "encode")  ? ENCODE  :
+           !strcmp(str, "decode")  ? DECODE  :
            !strcmp(str, "cat")     ? CAT     :
            !strcmp(str, "cut")     ? CUT     :
            !strcmp(str, "slice")   ? SLICE   :
@@ -769,8 +774,9 @@ int main(int argc, char **argv) {
             if (!is_tty) return 0;
             free(files);
             files = NULL;
-            // intentional fall-through
         }
+        // intentional fall-through
+        case DECODE:
         case PRINT: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
@@ -784,67 +790,75 @@ int main(int argc, char **argv) {
                 if (h.field_specs[j].type == STRING) string_fields++;
             if (string_fields) load_strings();
 
-            for (int j = 0; j < h.field_count; j++) {
-                char *name = h.field_specs[j].name;
-                size_t len = strlen(name);
-                switch (h.field_specs[j].type) {
-                    case INTEGER: {
-                        int space = 21 - strlen(name);
-                        for (int k = 0; k < space; k++) putchar(' ');
-                        fwriten(name, 1, len, stdout);
-                        break;
-                    }
-                    case FLOAT: {
-                        int space = 21 - strlen(name);
-                        for (int k = 0; k < space-7; k++) putchar(' ');
-                        fwriten(name, 1, len, stdout);
-                        for (int k = 0; k < 7; k++) putchar(' ');
-                        break;
-                    }
-                    case STRING: {
-                        int space = string_maxlen + 1 - strlen(name);
-                        putchar(' ');
-                        fwriten(name, 1, len, stdout);
-                        for (int k = 0; k < space-1; k++) putchar(' ');
-                        break;
+            char *pre, *inter, *post;
+            char *integer_format, *float_format, *string_format;
+
+            if (cmd == DECODE) {
+                pre = ""; inter = "\t"; post = "\n";
+                integer_format = "%lld";
+                float_format = "%.10f";
+                string_format = "%s";
+            } else {
+                pre = " "; inter = " "; post = "\n";
+                integer_format = "%20lld";
+                asprintf(&float_format, "%%20.6%c", float_format_char);
+                asprintf(&string_format, "%%-%ds", string_maxlen);
+
+                for (int j = 0; j < h.field_count; j++) {
+                    char *name = h.field_specs[j].name;
+                    size_t len = strlen(name);
+                    switch (h.field_specs[j].type) {
+                        case INTEGER: {
+                            int space = 21 - strlen(name);
+                            for (int k = 0; k < space; k++) putchar(' ');
+                            fwriten(name, 1, len, stdout);
+                            break;
+                        }
+                        case FLOAT: {
+                            int space = 21 - strlen(name);
+                            for (int k = 0; k < space-7; k++) putchar(' ');
+                            fwriten(name, 1, len, stdout);
+                            for (int k = 0; k < 7; k++) putchar(' ');
+                            break;
+                        }
+                        case STRING: {
+                            int space = string_maxlen + 1 - strlen(name);
+                            putchar(' ');
+                            fwriten(name, 1, len, stdout);
+                            for (int k = 0; k < space-1; k++) putchar(' ');
+                            break;
+                        }
                     }
                 }
-            }
-            putchar('\n');
+                putchar('\n');
 
-            int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
-            for (int j = 0; j < dashes; j++) putchar('-');
-            putchar('\n');
-            char *string_format;
-            asprintf(&string_format, " %%-%ds", string_maxlen);
+                int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
+                for (int j = 0; j < dashes; j++) putchar('-');
+                putchar('\n');
+
+            }
 
             FILE *file;
+            long long *record = malloc(h.field_count*sizeof(long long));
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 for (;;) {
-                    int c = getc(file);
-                    if (c == EOF) {
-                        dieif(ferror(file), "read error for %s: %s\n", argstr(argv[i]), errstr);
-                        break;
-                    }
-                    dieif(ungetc(c, file) == EOF, "ungetc failed: %s\n", errstr);
+                    int r = fread(record, sizeof(long long), h.field_count, file);
+                    if (!r && feof(file)) break;
+                    dieif(r < h.field_count,
+                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                    if (*pre) printf("%s", pre);
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
                             case INTEGER: {
-                                long long v;
-                                fread1(&v, sizeof(v), file);
-                                printf(" %20lld", v);
+                                printf(integer_format, record[j]);
                                 break;
                             }
                             case FLOAT: {
-                                double v;
-                                fread1(&v, sizeof(v), file);
-                                printf(float_format, v);
+                                printf(float_format, reinterpret(double,record[j]));
                                 break;
                             }
                             case STRING: {
-                                long long v;
-                                fread1(&v, sizeof(v), file);
-                                char *s = index_to_string(v);
+                                char *s = index_to_string(record[j]);
                                 printf(string_format, s);
                                 break;
                             }
@@ -853,8 +867,9 @@ int main(int argc, char **argv) {
                                     typestr(h.field_specs[j].type),
                                     h.field_specs[j].type);
                         }
+                        if (j < h.field_count-1) printf("%s", inter);
                     }
-                    putchar('\n');
+                    printf("%s", post);
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
             }
