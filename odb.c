@@ -553,9 +553,12 @@ int main(int argc, char **argv) {
                             case INTEGER: {
                                 errno = 0;
                                 long long v = strtoll(line, &line, 10);
-                                dieif(errno == EINVAL && v == 0, "invalid integer: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && v == LLONG_MIN, "integer underflow: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && v == LLONG_MAX, "integer overflow: %s\n", ltrunc(line));
+                                dieif(errno == EINVAL && v == 0,
+                                      "invalid integer: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && v == LLONG_MIN,
+                                      "integer underflow: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && v == LLONG_MAX,
+                                      "integer overflow: %s\n", ltrunc(line));
                                 fwrite1(&v, sizeof(v), stdout);
                                 break;
                             }
@@ -563,9 +566,12 @@ int main(int argc, char **argv) {
                                 char *p;
                                 errno = 0;
                                 double v = strtod(line, &p);
-                                dieif(p == line && v == 0.0, "invalid float: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && v == 0.0, "float underflow: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && abs(v) == HUGE_VAL, "float overflow: %s\n", ltrunc(line));
+                                dieif(p == line && v == 0.0,
+                                      "invalid float: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && v == 0.0,
+                                      "float underflow: %s\n", ltrunc(line));
+                                dieif(errno == ERANGE && abs(v) == HUGE_VAL,
+                                      "float overflow: %s\n", ltrunc(line));
                                 fwrite1(&v, sizeof(v), stdout);
                                 line = p;
                                 break;
