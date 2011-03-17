@@ -37,6 +37,7 @@ static const char *const cmdstr =
     "  encode     Encode data to ODB format\n"
     "  cat        Concatenate files with like schemas\n"
     "  cut        Cut selected columns\n"
+    "  slice      Slice rows by offset, stride and count\n"
     "  paste      Paste columns from different files\n"
     "  join       Join files on specified fields\n"
     "  print      Print data in tabular format\n"
@@ -49,6 +50,7 @@ static const char *const cmdstr =
 static const char *const optstr =
     " -f --fields=<fields>   Comma-sparated fields\n"
     " -s --strings=<file>    Use <file> as string index\n"
+    " -n --number=<n>        Output at most <n> records\n"
     " -e --format-e          Use %e to print floats\n"
     " -g --format-g          Use %g to print floats\n"
     " -h --help              Print this message\n"
@@ -101,6 +103,7 @@ typedef enum {
     ENCODE,
     CAT,
     CUT,
+    SLICE,
     PASTE,
     JOIN,
     PRINT,
@@ -116,6 +119,7 @@ cmd_t parse_cmd(char *str) {
            !strcmp(str, "encode")  ? ENCODE  :
            !strcmp(str, "cat")     ? CAT     :
            !strcmp(str, "cut")     ? CUT     :
+           !strcmp(str, "slice")   ? SLICE   :
            !strcmp(str, "paste")   ? PASTE   :
            !strcmp(str, "join")    ? JOIN    :
            !strcmp(str, "print")   ? PRINT   :
@@ -837,6 +841,6 @@ int main(int argc, char **argv) {
         case INVALID:
             die("invalid command: %s\n", argv[-1]);
         default:
-            die("command not implemented: %s\n", argv[-1]);
+            die("sorry, the %s command isn't implemented yet\n", argv[-1]);
     }
 }
