@@ -315,37 +315,42 @@ int seekable(FILE *file) {
     die("seek error: %s\n", errstr);
 }
 
-char *argstr(char *arg) { arg ? arg : "-"; }
-
 FILE **files = NULL;
+int *writable = NULL;
 
-FILE *fopenr_arg(int argc, char **argv, int i) {
-    if (!files) files = calloc(argc, sizeof(FILE*));
-    if (argc == 0 && i == 0)    return stdin;
-    if (argc <= i)              return NULL;
+FILE *fopenr_arg(int argc, char **argv, int i, int try_write) {
+    if (argc <= i) return NULL;
+    if (!files) {
+        files = calloc(argc+1, sizeof(FILE*));
+        writable = calloc(argc+1, sizeof(int*));
+    }
     if (files[i]) {
         if (seekable(files[i])) {
             off_t offset = ftello(files[i]);
             files[i] = freopen(NULL, "r", files[i]);
-            dieif(!files[i], "error reopening %s: %s\n", argstr(argv[i]), errstr);
+            dieif(!files[i], "error reopening %s: %s\n", argv[i], errstr);
             dieif(fseeko(files[i], offset, SEEK_SET),
-                  "seek error for %s: %s\n", argstr(argv[i]), errstr);
+                  "seek error for %s: %s\n", argv[i], errstr);
         }
         return files[i];
     }
-    if (!strcmp(argv[i], "-"))  return files[i] = stdin;
+    if (!strcmp(argv[i], "-")) return files[i] = stdin;
 
-    files[i] = fopen(argv[i], "r");
-    dieif(!files[i], "error opening %s: %s\n", argstr(argv[i]), errstr);
+    char *mode = try_write ? "r+" : "r";
+    files[i] = fopen(argv[i], mode);
+    if (!files[i] && try_write && errno == EACCES)
+        files[i] = fopen(argv[i], "r");
+    else writable[i] = 1;
+    dieif(!files[i], "error opening %s: %s\n", argv[i], errstr);
     return files[i];
 }
 
-header_t read_headers(int argc, char **argv) {
+header_t read_headers(int argc, char **argv, int w) {
     header_t h;
     FILE *file;
-    for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+    for (int i = 0; file = fopenr_arg(argc, argv, i, w); i++) {
         if (i == 0) h = read_header(file);
-        else dieif(!check_header(file,h), "field spec mismatch: %s\n", argstr(argv[i]));
+        else dieif(!check_header(file,h), "field spec mismatch: %s\n", argv[i]);
     }
     return h;
 }
@@ -523,8 +528,11 @@ int main(int argc, char **argv) {
     int is_tty = isatty(fileno(stdout));
     if (is_tty && printable(cmd) && !fork_child(0)) {
         argc = 0;
-        argv = NULL;
         cmd = PRINT;
+    }
+    if (!argc) {
+        argc = 1;
+        argv[0] = "-";
     }
 
     switch (cmd) {
@@ -542,7 +550,7 @@ int main(int argc, char **argv) {
 
             FILE *file;
             char *last = NULL;
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
                 size_t length;
                 char *line, *buffer = NULL;
                 while (line = get_line(file, &buffer, &length)) {
@@ -559,7 +567,7 @@ int main(int argc, char **argv) {
                     if (maxlen < len) maxlen = len;
                     fwrite1(line, len+1, strings);
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             dieif(!n, "no strings provided\n");
             offsets = realloc(offsets, n*sizeof(off_t));
@@ -653,7 +661,7 @@ int main(int argc, char **argv) {
                     if (specs[i].type == DATE) specs[i].type = FLOAT;
 
             FILE *file;
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
                 size_t length;
                 char *line, *buffer = NULL;
                 while (line = get_line(file, &buffer, &length)) {
@@ -728,7 +736,7 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             if (is_tty) wait_child();
             return 0;
@@ -736,7 +744,7 @@ int main(int argc, char **argv) {
 
         case DECODE:
         case PRINT: {
-            h = read_headers(argc, argv);
+            h = read_headers(argc, argv, 0);
             h_size = header_size(h);
         print:
             if (is_tty && !fork_child(1)) {
@@ -816,12 +824,12 @@ int main(int argc, char **argv) {
 
             FILE *file;
             long long *record = malloc(h.field_count*sizeof(long long));
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
                 for (;;) {
                     int r = fread(record, sizeof(long long), h.field_count, file);
                     if (!r && feof(file)) break;
                     dieif(r < h.field_count,
-                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                          "unexpected eof in %s: %s\n", argv[i], errstr);
                     if (*pre) printf(pre, line_number++, delim);
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
@@ -853,7 +861,7 @@ int main(int argc, char **argv) {
                     }
                     printf("%s", post);
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             if (is_tty) wait_child();
             return 0;
@@ -861,7 +869,7 @@ int main(int argc, char **argv) {
 
         case SLICE: {
             int n, *cut;
-            h = read_headers(argc, argv);
+            h = read_headers(argc, argv, 0);
             h_size = header_size(h);
         slice:
             if (!fields_arg) {
@@ -890,16 +898,16 @@ int main(int argc, char **argv) {
 
             FILE *file;
             long long *record = malloc(h.field_count*sizeof(long long));
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
                 for (;;) {
                     int r = fread(record, sizeof(long long), h.field_count, file);
                     if (!r && feof(file)) break;
                     dieif(r < h.field_count,
-                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                          "unexpected eof in %s: %s\n", argv[i], errstr);
                     for (int j = 0; j < n; j++)
                         fwrite1(record + cut[j], sizeof(long long), stdout);
                 }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
             if (is_tty) wait_child();
             return 0;
@@ -910,7 +918,7 @@ int main(int argc, char **argv) {
             header_t ht = {0, NULL};
             int max_field_count = 0;
             int *field_counts = malloc(argc*sizeof(int));
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
                 header_t hi = read_header(file);
                 ht.field_specs = realloc(
                     ht.field_specs,
@@ -930,14 +938,14 @@ int main(int argc, char **argv) {
             long long *record = malloc(max_field_count*sizeof(long long));
             for (;;) {
                 int done = 0;
-                for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+                for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
                     int r = fread(record, sizeof(long long), field_counts[i], file);
                     if (!r && feof(file)) {
                         done++;
                         continue;
                     };
                     dieif(r < field_counts[i],
-                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                          "unexpected eof in %s: %s\n", argv[i], errstr);
                     fwriten(record, sizeof(long long), field_counts[i], stdout);
                 }
                 dieif(done && done < argc, "unequal records in inputs\n");
@@ -948,8 +956,7 @@ int main(int argc, char **argv) {
         }
 
         case SORT: {
-            dieif(!argc, "sorting stdin not supported\n");
-            h = read_headers(argc, argv);
+            h = read_headers(argc, argv, 1);
             h_size = header_size(h);
 
             if (!fields_arg) {
@@ -975,11 +982,8 @@ int main(int argc, char **argv) {
                 }
             }
 
-            for (int i = 0; i < argc; i++) {
-                dieif(!strcmp(argv[i], "-"), "sorting stdin not supported\n");
-                FILE *file = fopen(argv[i], "r+");
-                dieif(!file, "error opening %s: %s\n", argv[i], errstr);
-
+            FILE *file;
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 1); i++) {
                 struct stat fs;
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
 
