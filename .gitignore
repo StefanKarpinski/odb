@@ -2,6 +2,7 @@
 *.o
 *.dSYM
 *.tsv
+*.csv
 *.odb
 *.idx
 *.txt
