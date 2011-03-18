@@ -51,6 +51,7 @@ static const char *const cmdstr =
 ;
 
 static const char *const optstr =
+    " -d --delim=<char>         Delimit fields by <char>\n"
     " -f --fields=<fields>      Comma-sparated fields\n"
     " -s --strings=<file>       Use <file> as string index\n"
     " -r --range=<range>        Output a range slice of records\n"
@@ -59,21 +60,25 @@ static const char *const optstr =
     " -e --float-e              Use %e to print floats\n"
     " -g --float-g              Use %g to print floats\n"
     " -T --timestamp=<fmt>      Use <fmt> as a timestamp format\n"
+    " -D --date=<fmt>           Use <fmt> as a date format\n"
     " -q --quiet                Suppress output (sort, rename, cast)\n"
     " -h --help                 Print this message\n"
 ;
 
+static char *delim = "\t";
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
 static long long line_number = 1;
 static int print_line_numbers = 0;
 static char float_format_char = 'f';
-static char *timestamp_fmt = "%F %T";
+static char *timestamp_fmt = NULL;
+static char *date_fmt = NULL;
 static int quiet = 0;
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "f:s:r:n:N::egT:qh";
+    static char* shortopts = "d:f:s:r:n:N::egT:D:qh";
     static struct option longopts[] = {
+        { "delim",          required_argument, 0, 'd' },
         { "fields",         required_argument, 0, 'f' },
         { "strings",        required_argument, 0, 's' },
         { "range",          required_argument, 0, 'r' },
@@ -82,6 +87,7 @@ void parse_opts(int *argcp, char ***argvp) {
         { "float-e",        no_argument,       0, 'e' },
         { "float-g",        no_argument,       0, 'g' },
         { "timestamp",      required_argument, 0, 'T' },
+        { "date",           required_argument, 0, 'D' },
         { "quiet",          no_argument,       0, 'q' },
         { "help",           no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
@@ -89,6 +95,9 @@ void parse_opts(int *argcp, char ***argvp) {
     int c;
     while ((c = getopt_long(*argcp, *argvp, shortopts, longopts, 0)) != -1) {
         switch(c) {
+            case 'd':
+                delim = optarg;
+                break;
             case 'f':
                 fields_arg = optarg;
                 break;
@@ -113,6 +122,9 @@ void parse_opts(int *argcp, char ***argvp) {
                 break;
             case 'T':
                 timestamp_fmt = optarg;
+                break;
+            case 'D':
+                date_fmt = optarg;
                 break;
             case 'q':
                 quiet = 1;
@@ -161,20 +173,22 @@ cmd_t parse_cmd(char *str) {
            !strcmp(str, "help")    ? HELP    : INVALID;
 }
 
-const int n_types = 4;
+const int n_types = 5;
 
 char *typestrs[] = {
     "int",
     "float",
     "string",
-    "timestamp"
+    "timestamp",
+    "date"
 };
 
 typedef enum {
     INTEGER,
     FLOAT,
     STRING,
-    TIMESTAMP
+    TIMESTAMP,
+    DATE
 } field_type_t;
 
 char *typestr(field_type_t t) {
@@ -468,6 +482,14 @@ size_t strcnt(char *str, char c) {
     return n;
 }
 
+char *timelikefmt(field_type_t t) {
+    switch (t) {
+        case TIMESTAMP: return timestamp_fmt;
+        case DATE:      return date_fmt;
+    }
+    die("type %s is not time-like\n", typestr(t));
+}
+
 #define printable(cmd) (cmd == ENCODE || cmd == SLICE || cmd == PASTE)
 
 int main(int argc, char **argv) {
@@ -598,6 +620,13 @@ int main(int argc, char **argv) {
             if (string_fields) load_strings();
             write_header(stdout, n, specs);
 
+            if (!timestamp_fmt)
+                for (int i = 0; i < n; i++)
+                    if (specs[i].type == TIMESTAMP) specs[i].type = FLOAT;
+            if (!date_fmt)
+                for (int i = 0; i < n; i++)
+                    if (specs[i].type == DATE) specs[i].type = FLOAT;
+
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
                 size_t length;
@@ -617,8 +646,7 @@ int main(int argc, char **argv) {
                                 fwrite1(&v, sizeof(v), stdout);
                                 break;
                             }
-                            case FLOAT:
-                            case TIMESTAMP: {
+                            case FLOAT: {
                                 char *p;
                                 errno = 0;
                                 double v = strtod(line, &p);
@@ -635,7 +663,7 @@ int main(int argc, char **argv) {
                             case STRING: {
                                 off_t len = buffer+length-line-1;
                                 if (j < n-1) {
-                                    char *end = memchr(line, '\t', len);
+                                    char *end = memchr(line, delim[0], len);
                                     dieif(!end, "tab expected after: %s\n", ltrunc(line));
                                     len = end-line;
                                 }
@@ -644,11 +672,25 @@ int main(int argc, char **argv) {
                                 line += len;
                                 break;
                             }
+                            case TIMESTAMP:
+                            case DATE: {
+                                struct tm st;
+                                char *fmt = timelikefmt(specs[j].type);
+                                char *p = strptime(line, fmt, &st);
+                                dieif(!p, "invalid timestamp: %s\n", ltrunc(line));
+                                double v = (double) timegm(&st);
+                                fwrite1(&v, sizeof(v), stdout);
+                                line = p;
+                                break;
+                            }
                             default:
                                 die("encoding type %s not yet implemented\n", typestr(specs[j].type));
                         }
                         if (j < n-1) {
-                            dieif(line[0] != '\t', "tab expected: %s\n", ltrunc(line));
+                            if (line[0] != delim[0]) {
+                                char *delim_name = delim[0] == '\t' ? "tab" : "delimiter";
+                                die("%s expected: %s\n", delim_name, ltrunc(line));
+                            }
                             line++;
                         } else {
                             dieif(!(line[0] == '\n' || line[0] == '\r'),
@@ -820,16 +862,21 @@ int main(int argc, char **argv) {
             char *pre, *inter, *post;
             char *integer_format, *float_format, *string_format, *time_format;
 
+            if (!timestamp_fmt) timestamp_fmt = "%F %T";
+            if (!date_fmt) date_fmt = "%F";
+
             if (cmd == DECODE) {
-                pre = print_line_numbers ? "%lld\t" : "";
-                inter = "\t"; post = "\n";
+                pre = print_line_numbers ? "%lld" : "";
+                inter = delim;
+                post = "\n";
                 integer_format = "%lld";
                 asprintf(&float_format, "%%.6%c", float_format_char);
                 string_format = "%s";
                 time_format = "%s";
             } else {
                 pre = print_line_numbers ? "%8lld:    " : " ";
-                inter = " "; post = "\n";
+                inter = " ";
+                post = "\n";
                 integer_format = "%20lld";
                 asprintf(&float_format, "%%20.6%c", float_format_char);
                 asprintf(&string_format, "%%-%ds", string_maxlen);
@@ -843,7 +890,8 @@ int main(int argc, char **argv) {
                     size_t len = strlen(name);
                     switch (h.field_specs[j].type) {
                         case INTEGER:
-                        case TIMESTAMP: {
+                        case TIMESTAMP:
+                        case DATE: {
                             int space = 21 - strlen(name);
                             for (int k = 0; k < space; k++) putchar(' ');
                             fwriten(name, 1, len, stdout);
@@ -888,7 +936,7 @@ int main(int argc, char **argv) {
                     if (!r && feof(file)) break;
                     dieif(r < h.field_count,
                           "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
-                    if (*pre) printf(pre, line_number++);
+                    if (*pre) printf(pre, line_number++, delim);
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
                             case INTEGER: {
@@ -903,13 +951,15 @@ int main(int argc, char **argv) {
                                 printf(string_format, index_to_string(record[j]));
                                 break;
                             }
-                            case TIMESTAMP: {
+                            case TIMESTAMP:
+                            case DATE: {
                                 double dt = reinterpret(double,record[j]);
                                 time_t tt = (time_t) round(dt);
                                 struct tm st;
                                 gmtime_r(&tt, &st);
                                 char buffer[256];
-                                strftime(buffer, sizeof(buffer)-1, timestamp_fmt, &st);
+                                char *fmt = timelikefmt(h.field_specs[j].type);
+                                strftime(buffer, sizeof(buffer)-1, fmt, &st);
                                 printf(time_format, buffer);
                             }
                         }
