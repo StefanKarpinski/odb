@@ -513,6 +513,7 @@ int main(int argc, char **argv) {
     }
 
     switch (cmd) {
+
         case STRINGS: {
             off_t strings_off, offsets_off, reverse_off, cmph_off, maxlen = 0;
 
@@ -610,6 +611,7 @@ int main(int argc, char **argv) {
             dieif(fclose(strings), "error closing %s: %s\n", strings_file, errstr);
             return 0;
         }
+
         case ENCODE: {
             dieif(!fields_arg, "use -f to provide fields\n");
 
@@ -716,6 +718,7 @@ int main(int argc, char **argv) {
             if (is_tty) wait_child();
             return 0;
         }
+
         case DECODE:
         case PRINT: print: {
             h = read_headers(argc, argv);
@@ -839,6 +842,7 @@ int main(int argc, char **argv) {
             if (is_tty) wait_child();
             return 0;
         }
+
         case SLICE: slice: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
@@ -884,6 +888,7 @@ int main(int argc, char **argv) {
             if (is_tty) wait_child();
             return 0;
         }
+
         case PASTE: {
             FILE *file;
             header_t ht = {0, NULL};
@@ -925,6 +930,7 @@ int main(int argc, char **argv) {
             if (is_tty) wait_child();
             return 0;
         }
+
         case SORT: {
             dieif(!argc, "sorting stdin not supported\n");
             h = read_headers(argc, argv);
@@ -988,11 +994,14 @@ int main(int argc, char **argv) {
             if (is_tty) goto print;
             else goto slice;
         }
+
         case HELP:
             printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
             return 0;
+
         case INVALID:
             die("invalid command: %s\n", argv[-1]);
+
         default:
             die("sorry, the %s command isn't implemented yet\n", argv[-1]);
     }
