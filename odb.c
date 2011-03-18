@@ -716,7 +716,130 @@ int main(int argc, char **argv) {
             if (is_tty) wait_child();
             return 0;
         }
-        case SLICE: {
+        case DECODE:
+        case PRINT: print: {
+            h = read_headers(argc, argv);
+            h_size = header_size(h);
+            if (is_tty && !fork_child(1)) {
+                execlp("less", "less", NULL);
+                die("exec failed: %s\n", errstr);
+            }
+            if (string_fields) load_strings();
+
+            char *pre, *inter, *post;
+            char *integer_format, *float_format, *string_format, *time_format;
+
+            if (!timestamp_fmt) timestamp_fmt = "%F %T";
+            if (!date_fmt) date_fmt = "%F";
+
+            if (cmd == DECODE) {
+                pre = print_line_numbers ? "%lld" : "";
+                inter = delim;
+                post = "\n";
+                integer_format = "%lld";
+                asprintf(&float_format, "%%.6%c", float_format_char);
+                string_format = "%s";
+                time_format = "%s";
+            } else {
+                pre = print_line_numbers ? "%8lld:    " : " ";
+                inter = " ";
+                post = "\n";
+                integer_format = "%20lld";
+                asprintf(&float_format, "%%20.6%c", float_format_char);
+                asprintf(&string_format, "%%-%ds", string_maxlen);
+                time_format = "%20s";
+
+                if (print_line_numbers)
+                    for (int k = 0; k < 12; k++) putchar(' ');
+
+                for (int j = 0; j < h.field_count; j++) {
+                    char *name = h.field_specs[j].name;
+                    size_t len = strlen(name);
+                    switch (h.field_specs[j].type) {
+                        case INTEGER:
+                        case TIMESTAMP:
+                        case DATE: {
+                            int space = 21 - strlen(name);
+                            for (int k = 0; k < space; k++) putchar(' ');
+                            fwriten(name, 1, len, stdout);
+                            break;
+                        }
+                        case FLOAT: {
+                            int space = 21 - strlen(name);
+                            for (int k = 0; k < space-7; k++) putchar(' ');
+                            fwriten(name, 1, len, stdout);
+                            if (j < h.field_count-1)
+                                for (int k = 0; k < 7; k++) putchar(' ');
+                            break;
+                        }
+                        case STRING: {
+                            int space = string_maxlen + 1 - strlen(name);
+                            putchar(' ');
+                            fwriten(name, 1, len, stdout);
+                            if (j < h.field_count-1)
+                                for (int k = 0; k < space-1; k++) putchar(' ');
+                            break;
+                        }
+                        default:
+                            die("unsupported type: %s (%d)\n",
+                                typestr(h.field_specs[j].type),
+                                h.field_specs[j].type)
+                    }
+                }
+                putchar('\n');
+
+                int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
+                if (print_line_numbers) dashes += 12;
+                for (int j = 0; j < dashes; j++) putchar('-');
+                putchar('\n');
+
+            }
+
+            FILE *file;
+            long long *record = malloc(h.field_count*sizeof(long long));
+            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
+                for (;;) {
+                    int r = fread(record, sizeof(long long), h.field_count, file);
+                    if (!r && feof(file)) break;
+                    dieif(r < h.field_count,
+                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
+                    if (*pre) printf(pre, line_number++, delim);
+                    for (int j = 0; j < h.field_count; j++) {
+                        switch (h.field_specs[j].type) {
+                            case INTEGER: {
+                                printf(integer_format, record[j]);
+                                break;
+                            }
+                            case FLOAT: {
+                                printf(float_format, reinterpret(double,record[j]));
+                                break;
+                            }
+                            case STRING: {
+                                printf(string_format, index_to_string(record[j]));
+                                break;
+                            }
+                            case TIMESTAMP:
+                            case DATE: {
+                                double dt = reinterpret(double,record[j]);
+                                time_t tt = (time_t) round(dt);
+                                struct tm st;
+                                gmtime_r(&tt, &st);
+                                char buffer[256];
+                                char *fmt = timelikefmt(h.field_specs[j].type);
+                                strftime(buffer, sizeof(buffer)-1, fmt, &st);
+                                printf(time_format, buffer);
+                            }
+                        }
+                        if (j < h.field_count-1) printf("%s", inter);
+                    }
+                    printf("%s", post);
+                }
+                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
+            }
+            if (is_tty) wait_child();
+            return 0;
+        }
+        case SLICE: slice: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
 
@@ -857,133 +980,13 @@ int main(int argc, char **argv) {
                       "munmap failed for %s: %s\n", argv[i], errstr);
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
-            if (!is_tty) return 0;
+            if (quiet) return 0;
+            // force the next operation to re-open files...
             free(files);
             files = NULL;
-        }
-        // intentional fall-through
-        case DECODE:
-        case PRINT: {
-            h = read_headers(argc, argv);
-            h_size = header_size(h);
-            if (is_tty && !fork_child(1)) {
-                execlp("less", "less", NULL);
-                die("exec failed: %s\n", errstr);
-            }
-            if (string_fields) load_strings();
-
-            char *pre, *inter, *post;
-            char *integer_format, *float_format, *string_format, *time_format;
-
-            if (!timestamp_fmt) timestamp_fmt = "%F %T";
-            if (!date_fmt) date_fmt = "%F";
-
-            if (cmd == DECODE) {
-                pre = print_line_numbers ? "%lld" : "";
-                inter = delim;
-                post = "\n";
-                integer_format = "%lld";
-                asprintf(&float_format, "%%.6%c", float_format_char);
-                string_format = "%s";
-                time_format = "%s";
-            } else {
-                pre = print_line_numbers ? "%8lld:    " : " ";
-                inter = " ";
-                post = "\n";
-                integer_format = "%20lld";
-                asprintf(&float_format, "%%20.6%c", float_format_char);
-                asprintf(&string_format, "%%-%ds", string_maxlen);
-                time_format = "%20s";
-
-                if (print_line_numbers)
-                    for (int k = 0; k < 12; k++) putchar(' ');
-
-                for (int j = 0; j < h.field_count; j++) {
-                    char *name = h.field_specs[j].name;
-                    size_t len = strlen(name);
-                    switch (h.field_specs[j].type) {
-                        case INTEGER:
-                        case TIMESTAMP:
-                        case DATE: {
-                            int space = 21 - strlen(name);
-                            for (int k = 0; k < space; k++) putchar(' ');
-                            fwriten(name, 1, len, stdout);
-                            break;
-                        }
-                        case FLOAT: {
-                            int space = 21 - strlen(name);
-                            for (int k = 0; k < space-7; k++) putchar(' ');
-                            fwriten(name, 1, len, stdout);
-                            if (j < h.field_count-1)
-                                for (int k = 0; k < 7; k++) putchar(' ');
-                            break;
-                        }
-                        case STRING: {
-                            int space = string_maxlen + 1 - strlen(name);
-                            putchar(' ');
-                            fwriten(name, 1, len, stdout);
-                            if (j < h.field_count-1)
-                                for (int k = 0; k < space-1; k++) putchar(' ');
-                            break;
-                        }
-                        default:
-                            die("unsupported type: %s (%d)\n",
-                                typestr(h.field_specs[j].type),
-                                h.field_specs[j].type)
-                    }
-                }
-                putchar('\n');
-
-                int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
-                if (print_line_numbers) dashes += 12;
-                for (int j = 0; j < dashes; j++) putchar('-');
-                putchar('\n');
-
-            }
-
-            FILE *file;
-            long long *record = malloc(h.field_count*sizeof(long long));
-            for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                for (;;) {
-                    int r = fread(record, sizeof(long long), h.field_count, file);
-                    if (!r && feof(file)) break;
-                    dieif(r < h.field_count,
-                          "unexpected eof in %s: %s\n", argstr(argv[i]), errstr);
-                    if (*pre) printf(pre, line_number++, delim);
-                    for (int j = 0; j < h.field_count; j++) {
-                        switch (h.field_specs[j].type) {
-                            case INTEGER: {
-                                printf(integer_format, record[j]);
-                                break;
-                            }
-                            case FLOAT: {
-                                printf(float_format, reinterpret(double,record[j]));
-                                break;
-                            }
-                            case STRING: {
-                                printf(string_format, index_to_string(record[j]));
-                                break;
-                            }
-                            case TIMESTAMP:
-                            case DATE: {
-                                double dt = reinterpret(double,record[j]);
-                                time_t tt = (time_t) round(dt);
-                                struct tm st;
-                                gmtime_r(&tt, &st);
-                                char buffer[256];
-                                char *fmt = timelikefmt(h.field_specs[j].type);
-                                strftime(buffer, sizeof(buffer)-1, fmt, &st);
-                                printf(time_format, buffer);
-                            }
-                        }
-                        if (j < h.field_count-1) printf("%s", inter);
-                    }
-                    printf("%s", post);
-                }
-                dieif(fclose(file), "error closing %s: %s\n", argstr(argv[i]), errstr);
-            }
-            if (is_tty) wait_child();
-            return 0;
+            fields_arg = NULL;
+            if (is_tty) goto print;
+            else goto slice;
         }
         case HELP:
             printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
