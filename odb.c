@@ -54,6 +54,7 @@ static const char *const optstr =
     " -d --delim=<char>         Delimit fields by <char>\n"
     " -f --fields=<fields>      Comma-sparated fields\n"
     " -s --strings=<file>       Use <file> as string index\n"
+    " -x --extract              String extraction mode for encode\n"
     " -r --range=<range>        Output a range slice of records\n"
     " -n --count=<n>            Output at most <n> records\n"
     " -N --line-numbers[=<b>]   Output with line numbers\n"
@@ -68,6 +69,7 @@ static const char *const optstr =
 static char *delim = "\t";
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
+static int extract = 0;
 static long long line_number = 1;
 static int print_line_numbers = 0;
 static char float_format_char = 'f';
@@ -76,11 +78,12 @@ static char *date_fmt = NULL;
 static int quiet = 0;
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "d:f:s:r:n:N::egT:D:qh";
+    static char* shortopts = "d:f:s:xr:n:N::egT:D:qh";
     static struct option longopts[] = {
         { "delim",          required_argument, 0, 'd' },
         { "fields",         required_argument, 0, 'f' },
         { "strings",        required_argument, 0, 's' },
+        { "extract",        no_argument,       0, 'x' },
         { "range",          required_argument, 0, 'r' },
         { "count",          required_argument, 0, 'n' },
         { "line-numbers",   optional_argument, 0, 'N' },
@@ -103,6 +106,9 @@ void parse_opts(int *argcp, char ***argvp) {
                 break;
             case 's':
                 strings_file = optarg;
+                break;
+            case 'x':
+                extract = 1;
                 break;
             case 'r':
                 // TODO: parse range
@@ -490,7 +496,7 @@ char *timelikefmt(field_type_t t) {
     die("type %s is not time-like\n", typestr(t));
 }
 
-#define printable(cmd) (cmd == ENCODE || cmd == SLICE || cmd == PASTE)
+#define printable(cmd) ((cmd == ENCODE && !extract) || cmd == SLICE || cmd == PASTE)
 
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
@@ -617,8 +623,10 @@ int main(int argc, char **argv) {
                 if (specs[i].type == STRING) string_fields++;
                 fields_arg = comma + 1;
             }
-            if (string_fields) load_strings();
-            write_header(stdout, n, specs);
+            if (!extract) {
+                write_header(stdout, n, specs);
+                if (string_fields) load_strings();
+            }
 
             if (!timestamp_fmt)
                 for (int i = 0; i < n; i++)
@@ -643,7 +651,7 @@ int main(int argc, char **argv) {
                                       "integer underflow: %s\n", ltrunc(line));
                                 dieif(errno == ERANGE && v == LLONG_MAX,
                                       "integer overflow: %s\n", ltrunc(line));
-                                fwrite1(&v, sizeof(v), stdout);
+                                if (!extract) fwrite1(&v, sizeof(v), stdout);
                                 break;
                             }
                             case FLOAT: {
@@ -656,7 +664,7 @@ int main(int argc, char **argv) {
                                       "float underflow: %s\n", ltrunc(line));
                                 dieif(errno == ERANGE && abs(v) == HUGE_VAL,
                                       "float overflow: %s\n", ltrunc(line));
-                                fwrite1(&v, sizeof(v), stdout);
+                                if (!extract) fwrite1(&v, sizeof(v), stdout);
                                 line = p;
                                 break;
                             }
@@ -667,8 +675,13 @@ int main(int argc, char **argv) {
                                     dieif(!end, "tab expected after: %s\n", ltrunc(line));
                                     len = end-line;
                                 }
-                                long long v = string_to_index(line, len);
-                                fwrite1(&v, sizeof(v), stdout);
+                                if (extract) {
+                                    fwriten(line, 1, len, stdout);
+                                    putchar('\n');
+                                } else {
+                                    long long v = string_to_index(line, len);
+                                    fwrite1(&v, sizeof(v), stdout);
+                                }
                                 line += len;
                                 break;
                             }
@@ -679,7 +692,7 @@ int main(int argc, char **argv) {
                                 char *p = strptime(line, fmt, &st);
                                 dieif(!p, "invalid timestamp: %s\n", ltrunc(line));
                                 double v = (double) timegm(&st);
-                                fwrite1(&v, sizeof(v), stdout);
+                                if (!extract) fwrite1(&v, sizeof(v), stdout);
                                 line = p;
                                 break;
                             }
