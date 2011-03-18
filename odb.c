@@ -309,21 +309,36 @@ int check_header(FILE *file, header_t hh) {
     return match;
 }
 
+int seekable(FILE *file) {
+    if (!fseeko(file, 0, SEEK_CUR)) return 1;
+    if (errno == EBADF || errno == ESPIPE) return 0;
+    die("seek error: %s\n", errstr);
+}
+
+char *argstr(char *arg) { arg ? arg : "-"; }
+
 FILE **files = NULL;
 
 FILE *fopenr_arg(int argc, char **argv, int i) {
     if (!files) files = calloc(argc, sizeof(FILE*));
     if (argc == 0 && i == 0)    return stdin;
     if (argc <= i)              return NULL;
-    if (files[i])               return files[i];
+    if (files[i]) {
+        if (seekable(files[i])) {
+            off_t offset = ftello(files[i]);
+            files[i] = freopen(NULL, "r", files[i]);
+            dieif(!files[i], "error reopening %s: %s\n", argstr(argv[i]), errstr);
+            dieif(fseeko(files[i], offset, SEEK_SET),
+                  "seek error for %s: %s\n", argstr(argv[i]), errstr);
+        }
+        return files[i];
+    }
     if (!strcmp(argv[i], "-"))  return files[i] = stdin;
 
-    FILE *file = fopen(argv[i], "r");
-    dieif(!file, "error opening %s: %s\n", argv[i], errstr);
-    return files[i] = file;
+    files[i] = fopen(argv[i], "r");
+    dieif(!files[i], "error opening %s: %s\n", argstr(argv[i]), errstr);
+    return files[i];
 }
-
-char *argstr(char *arg) { arg ? arg : "-"; }
 
 header_t read_headers(int argc, char **argv) {
     header_t h;
@@ -720,9 +735,10 @@ int main(int argc, char **argv) {
         }
 
         case DECODE:
-        case PRINT: print: {
+        case PRINT: {
             h = read_headers(argc, argv);
             h_size = header_size(h);
+        print:
             if (is_tty && !fork_child(1)) {
                 execlp("less", "less", NULL);
                 die("exec failed: %s\n", errstr);
@@ -843,11 +859,11 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        case SLICE: slice: {
+        case SLICE: {
+            int n, *cut;
             h = read_headers(argc, argv);
             h_size = header_size(h);
-
-            int n, *cut;
+        slice:
             if (!fields_arg) {
                 n = h.field_count;
                 cut = malloc(n*sizeof(int));
@@ -984,13 +1000,9 @@ int main(int argc, char **argv) {
 
                 dieif(munmap(mapped, fs.st_size),
                       "munmap failed for %s: %s\n", argv[i], errstr);
-                dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
-            if (quiet) return 0;
-            // force the next operation to re-open files...
-            free(files);
-            files = NULL;
             fields_arg = NULL;
+            if (quiet) return 0;
             if (is_tty) goto print;
             else goto slice;
         }
