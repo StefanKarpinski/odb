@@ -22,7 +22,7 @@
                                 fprintf(stderr,fmt,##args);            \
                                 fflush(stderr); fsync(fileno(stderr)); }
 
-#define die(fmt,args...)      { fflush(stdout); fsync(fileno(stdout)); \
+#define die(fmt,args...)      { fpurge(stdout); fsync(fileno(stdout)); \
                                 fprintf(stderr,fmt,##args);            \
                                 fflush(stderr); fsync(fileno(stderr)); \
                                 fclose(stderr); exit(1); }
@@ -58,17 +58,21 @@ static const char *const optstr =
     " -N --line-numbers[=<b>]   Output with line numbers\n"
     " -e --float-e              Use %e to print floats\n"
     " -g --float-g              Use %g to print floats\n"
+    " -T --timestamp=<fmt>      Use <fmt> as a timestamp format\n"
+    " -q --quiet                Suppress output (sort, rename, cast)\n"
     " -h --help                 Print this message\n"
 ;
 
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
-static int print_line_numbers = 0;
 static long long line_number = 1;
+static int print_line_numbers = 0;
 static char float_format_char = 'f';
+static char *timestamp_fmt = "%F %T";
+static int quiet = 0;
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "f:s:r:n:N::egh";
+    static char* shortopts = "f:s:r:n:N::egT:qh";
     static struct option longopts[] = {
         { "fields",         required_argument, 0, 'f' },
         { "strings",        required_argument, 0, 's' },
@@ -77,6 +81,8 @@ void parse_opts(int *argcp, char ***argvp) {
         { "line-numbers",   optional_argument, 0, 'N' },
         { "float-e",        no_argument,       0, 'e' },
         { "float-g",        no_argument,       0, 'g' },
+        { "timestamp",      required_argument, 0, 'T' },
+        { "quiet",          no_argument,       0, 'q' },
         { "help",           no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
     };
@@ -96,14 +102,20 @@ void parse_opts(int *argcp, char ***argvp) {
                 // TODO: parse count
                 break;
             case 'N':
-                print_line_numbers = 1;
                 if (optarg) line_number = atoi(optarg);
+                print_line_numbers = 1;
                 break;
             case 'e':
                 float_format_char = 'e';
                 break;
             case 'g':
                 float_format_char = 'g';
+                break;
+            case 'T':
+                timestamp_fmt = optarg;
+                break;
+            case 'q':
+                quiet = 1;
                 break;
             case 'h':
                 printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
@@ -149,19 +161,31 @@ cmd_t parse_cmd(char *str) {
            !strcmp(str, "help")    ? HELP    : INVALID;
 }
 
+const int n_types = 4;
+
+char *typestrs[] = {
+    "int",
+    "float",
+    "string",
+    "timestamp"
+};
+
 typedef enum {
     INTEGER,
     FLOAT,
-    STRING
+    STRING,
+    TIMESTAMP
 } field_type_t;
 
-char *typestr(field_type_t type) {
-    switch (type) {
-        case INTEGER: return "int";
-        case FLOAT:   return "float";
-        case STRING:  return "string";
-        default:      return "(unknown)";
-    }
+char *typestr(field_type_t t) {
+    if (t < 0 || n_types <= t) return "<unknown>";
+    return typestrs[t];
+}
+
+field_type_t parse_type(char *str) {
+    for (field_type_t t = 0; t < n_types; t++)
+        if (!strcmp(typestrs[t], str)) return t;
+    die("invalid type: %s\n", str);
 }
 
 typedef struct {
@@ -184,10 +208,7 @@ field_spec_t parse_field_spec(const char *const str) {
     int n = colon++ - str;
     dieif(n >= sizeof(spec.name), "field name too long: %s\n", str);
     memcpy(spec.name, str, n);
-    spec.type = !strcmp(colon, "int")    ? INTEGER :
-                !strcmp(colon, "float")  ? FLOAT   :
-                !strcmp(colon, "string") ? STRING  : -1;
-    dieif(spec.type < 0, "invalid field type: %s\n", colon);
+    spec.type = parse_type(colon);
     return spec;
 }
 
@@ -218,7 +239,10 @@ void fwrite1(const void *restrict ptr, size_t size, FILE *restrict stream) {
 }
 
 void freadn(void *restrict ptr, size_t size, size_t n, FILE *restrict stream) {
-    dieif(fread(ptr, size, n, stream) != n, "read error: %s\n", errstr);
+    size_t r = fread(ptr, size, n, stream);
+    if (r == n) return;
+    dieif(errno, "read error: %s\n", errstr);
+    exit(1); // die silently
 }
 
 void fread1(void *restrict ptr, size_t size, FILE *restrict stream) {
@@ -238,7 +262,7 @@ void write_header(FILE *file, long long n, field_spec_t *specs) {
 
 int string_fields;
 
-header_t read_header(FILE *file, int check_fields) {
+header_t read_header(FILE *file) {
     char preamble_b[sizeof(preamble_t)];
     fread1(preamble_b, sizeof(preamble_t), file);
     dieif(memcmp(preamble_b, &preamble, sizeof(preamble_t)), "invalid odb file\n");
@@ -247,26 +271,18 @@ header_t read_header(FILE *file, int check_fields) {
     fread1(&h.field_count, sizeof(h.field_count), file);
     h.field_specs = malloc(h.field_count*sizeof(field_spec_t));
     freadn(h.field_specs, sizeof(field_spec_t), h.field_count, file);
-    if (!check_fields) return h;
 
     string_fields = 0;
-    for (int i = 0; i < h.field_count; i++) {
-        switch (h.field_specs[i].type) {
-            case INTEGER: case FLOAT: break;
-            case STRING: string_fields++; break;
-            default:
-                die("invalid type: %s (%u)\n",
-                    typestr(h.field_specs[i].type),
-                    h.field_specs[i].type);
-        }
-    }
+    for (int i = 0; i < h.field_count; i++)
+        if (h.field_specs[i].type == STRING) string_fields++;
+
     return h;
 }
 
 void free_header(header_t h) { free(h.field_specs); }
 
 int check_header(FILE *file, header_t hh) {
-    header_t h = read_header(file, 0);
+    header_t h = read_header(file);
     int match = hh.field_count == h.field_count &&
         !memcmp(hh.field_specs, h.field_specs, h.field_count*sizeof(field_spec_t));
     free_header(h);
@@ -293,7 +309,7 @@ header_t read_headers(int argc, char **argv) {
     header_t h;
     FILE *file;
     for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-        if (i == 0) h = read_header(file, 1);
+        if (i == 0) h = read_header(file);
         else dieif(!check_header(file,h), "field spec mismatch: %s\n", argstr(argv[i]));
     }
     return h;
@@ -371,7 +387,7 @@ off_t string_maxlen;
 void load_strings() {
     struct stat fs;
     FILE *strings = fopen(strings_file, "r");
-    dieif(!strings, "error opening %s: %s", strings_file, errstr);
+    dieif(!strings, "error opening %s: %s\n", strings_file, errstr);
     dieif(fstat(fileno(strings), &fs), "stat error for %s: %s\n", strings_file, errstr);
     char *data = mmap(
         NULL,
@@ -601,7 +617,8 @@ int main(int argc, char **argv) {
                                 fwrite1(&v, sizeof(v), stdout);
                                 break;
                             }
-                            case FLOAT: {
+                            case FLOAT:
+                            case TIMESTAMP: {
                                 char *p;
                                 errno = 0;
                                 double v = strtod(line, &p);
@@ -695,7 +712,7 @@ int main(int argc, char **argv) {
             int max_field_count = 0;
             int *field_counts = malloc(argc*sizeof(int));
             for (int i = 0; file = fopenr_arg(argc, argv, i); i++) {
-                header_t hi = read_header(file, 1);
+                header_t hi = read_header(file);
                 ht.field_specs = realloc(
                     ht.field_specs,
                     (ht.field_count + hi.field_count)*sizeof(field_spec_t)
@@ -801,7 +818,7 @@ int main(int argc, char **argv) {
             if (string_fields) load_strings();
 
             char *pre, *inter, *post;
-            char *integer_format, *float_format, *string_format;
+            char *integer_format, *float_format, *string_format, *time_format;
 
             if (cmd == DECODE) {
                 pre = print_line_numbers ? "%lld\t" : "";
@@ -809,12 +826,14 @@ int main(int argc, char **argv) {
                 integer_format = "%lld";
                 asprintf(&float_format, "%%.6%c", float_format_char);
                 string_format = "%s";
+                time_format = "%s";
             } else {
                 pre = print_line_numbers ? "%8lld:    " : " ";
                 inter = " "; post = "\n";
                 integer_format = "%20lld";
                 asprintf(&float_format, "%%20.6%c", float_format_char);
                 asprintf(&string_format, "%%-%ds", string_maxlen);
+                time_format = "%20s";
 
                 if (print_line_numbers)
                     for (int k = 0; k < 12; k++) putchar(' ');
@@ -823,7 +842,8 @@ int main(int argc, char **argv) {
                     char *name = h.field_specs[j].name;
                     size_t len = strlen(name);
                     switch (h.field_specs[j].type) {
-                        case INTEGER: {
+                        case INTEGER:
+                        case TIMESTAMP: {
                             int space = 21 - strlen(name);
                             for (int k = 0; k < space; k++) putchar(' ');
                             fwriten(name, 1, len, stdout);
@@ -845,6 +865,10 @@ int main(int argc, char **argv) {
                                 for (int k = 0; k < space-1; k++) putchar(' ');
                             break;
                         }
+                        default:
+                            die("unsupported type: %s (%d)\n",
+                                typestr(h.field_specs[j].type),
+                                h.field_specs[j].type)
                     }
                 }
                 putchar('\n');
@@ -878,6 +902,15 @@ int main(int argc, char **argv) {
                             case STRING: {
                                 printf(string_format, index_to_string(record[j]));
                                 break;
+                            }
+                            case TIMESTAMP: {
+                                double dt = reinterpret(double,record[j]);
+                                time_t tt = (time_t) round(dt);
+                                struct tm st;
+                                gmtime_r(&tt, &st);
+                                char buffer[256];
+                                strftime(buffer, sizeof(buffer)-1, timestamp_fmt, &st);
+                                printf(time_format, buffer);
                             }
                         }
                         if (j < h.field_count-1) printf("%s", inter);
