@@ -74,13 +74,13 @@ static int extract = 0;
 static long long line_number = 1;
 static int print_line_numbers = 0;
 static char float_format_char = 'f';
-static char *timestamp_fmt = NULL;
-static char *date_fmt = NULL;
+static char *timestamp_fmt = "%F %T";
+static char *date_fmt = "%F";
 static int quiet = 0;
 static int tty = 0;
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "d:f:s:xr:n:N::egT:D:qth";
+    static char* shortopts = "d:f:s:xr:n:N::egT::D::qth";
     static struct option longopts[] = {
         { "delim",          required_argument, 0, 'd' },
         { "fields",         required_argument, 0, 'f' },
@@ -523,6 +523,11 @@ char *timelikefmt(field_type_t t) {
     die("type %s is not time-like\n", typestr(t));
 }
 
+void type_as_float(field_type_t type, field_spec_t *specs, size_t n) {
+    for (int i = 0; i < n; i++)
+        if (specs[i].type == type) specs[i].type = FLOAT;
+}
+
 #define pipe_to_print(cmd) ((cmd) == ENCODE && !extract || \
                             (cmd) == SLICE || cmd == PASTE || \
                             (cmd) == SORT && !quiet)
@@ -662,12 +667,8 @@ int main(int argc, char **argv) {
                 if (string_fields) load_strings();
             }
 
-            if (!timestamp_fmt)
-                for (int i = 0; i < n; i++)
-                    if (specs[i].type == TIMESTAMP) specs[i].type = FLOAT;
-            if (!date_fmt)
-                for (int i = 0; i < n; i++)
-                    if (specs[i].type == DATE) specs[i].type = FLOAT;
+            if (!timestamp_fmt) type_as_float(TIMESTAMP, specs, n);
+            if (!date_fmt) type_as_float(DATE, specs, n);
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
@@ -761,11 +762,13 @@ int main(int argc, char **argv) {
             }
             if (string_fields) load_strings();
 
+            if (!timestamp_fmt)
+                type_as_float(TIMESTAMP, h.field_specs, h.field_count);
+            if (!date_fmt)
+                type_as_float(DATE, h.field_specs, h.field_count);
+
             char *pre, *inter, *post;
             char *integer_format, *float_format, *string_format, *time_format;
-
-            if (!timestamp_fmt) timestamp_fmt = "%F %T";
-            if (!date_fmt) date_fmt = "%F";
 
             if (cmd == DECODE) {
                 pre = print_line_numbers ? "%lld" : "";
