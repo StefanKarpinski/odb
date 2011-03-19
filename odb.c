@@ -63,6 +63,7 @@ static const char *const optstr =
     " -T --timestamp=<fmt>      Use <fmt> as a timestamp format\n"
     " -D --date=<fmt>           Use <fmt> as a date format\n"
     " -q --quiet                Suppress output (sort, rename, cast)\n"
+    " -t --tty                  Force acting as for a TTY\n"
     " -h --help                 Print this message\n"
 ;
 
@@ -76,9 +77,10 @@ static char float_format_char = 'f';
 static char *timestamp_fmt = NULL;
 static char *date_fmt = NULL;
 static int quiet = 0;
+static int tty = 0;
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "d:f:s:xr:n:N::egT:D:qh";
+    static char* shortopts = "d:f:s:xr:n:N::egT:D:qth";
     static struct option longopts[] = {
         { "delim",          required_argument, 0, 'd' },
         { "fields",         required_argument, 0, 'f' },
@@ -92,6 +94,7 @@ void parse_opts(int *argcp, char ***argvp) {
         { "timestamp",      required_argument, 0, 'T' },
         { "date",           required_argument, 0, 'D' },
         { "quiet",          no_argument,       0, 'q' },
+        { "tty",            no_argument,       0, 't' },
         { "help",           no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
     };
@@ -134,6 +137,9 @@ void parse_opts(int *argcp, char ***argvp) {
                 break;
             case 'q':
                 quiet = 1;
+                break;
+            case 't':
+                tty = 1;
                 break;
             case 'h':
                 printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
@@ -526,7 +532,7 @@ int main(int argc, char **argv) {
     cmd_t cmd = parse_cmd(argv[0]);
     argv++; argc--;
 
-    int is_tty = isatty(fileno(stdout));
+    int is_tty = tty || isatty(fileno(stdout));
     if (is_tty && printable(cmd) && !fork_child(0)) {
         argc = 0;
         cmd = PRINT;
