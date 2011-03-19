@@ -972,6 +972,8 @@ int main(int argc, char **argv) {
                     if (fields_arg[0] == '-') {
                         fields_arg++;
                         sign = -1;
+                    } else if (fields_arg[0] == '+') {
+                        fields_arg++;
                     }
                     char *comma = strchr(fields_arg, ',');
                     if (comma) *comma = '\0';
