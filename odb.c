@@ -1032,7 +1032,43 @@ int main(int argc, char **argv) {
                       "munmap failed for %s: %s\n", argv[i], errstr);
             }
             fields_arg = NULL;
-            if (!quiet) goto slice;
+            if (quiet) return 0;
+
+            write_header(stdout, h.field_count, h.field_specs);
+            long long *records = malloc(argc*h.field_count*sizeof(long long));
+            int *done = calloc(argc, sizeof(int));
+            int donecount = 0;
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 1); i++) {
+                int r = fread(records + i*h.field_count,
+                              sizeof(long long), h.field_count, file);
+                if (!r && feof(file)) {
+                    done[i] = 1;
+                    donecount++;
+                    break;
+                }
+                dieif(r < h.field_count,
+                      "unexpected eof %s: %s\n", argv[i], errstr);
+            }
+            while (donecount < argc) {
+                int min = -1;
+                for (int i = 0; i < argc; i++)
+                    if (!done[i] && (min < 0 || lt_records(records, i, min)))
+                        min = i;
+                dieif(min < 0, "unexpected merge error\n");
+                fwriten(records + min*h.field_count,
+                        sizeof(long long), h.field_count, stdout);
+
+                int r = fread(records + min*h.field_count,
+                              sizeof(long long), h.field_count, files[min]);
+                if (!r && feof(files[min])) {
+                    done[min] = 1;
+                    donecount++;
+                } else {
+                    dieif(r < h.field_count,
+                          "unexpected eof %s: %s\n", argv[min], errstr);
+                }
+            }
+            if (is_tty) wait_child();
             return 0;
         }
 
