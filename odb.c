@@ -523,7 +523,9 @@ char *timelikefmt(field_type_t t) {
     die("type %s is not time-like\n", typestr(t));
 }
 
-#define printable(cmd) ((cmd == ENCODE && !extract) || cmd == SLICE || cmd == PASTE)
+#define pipe_to_print(cmd) ((cmd) == ENCODE && !extract || \
+                            (cmd) == SLICE || cmd == PASTE || \
+                            (cmd) == SORT && !quiet)
 
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
@@ -533,7 +535,7 @@ int main(int argc, char **argv) {
     argv++; argc--;
 
     int is_tty = tty || isatty(fileno(stdout));
-    if (is_tty && printable(cmd) && !fork_child(0)) {
+    if (is_tty && pipe_to_print(cmd) && !fork_child(0)) {
         argc = 0;
         cmd = PRINT;
     }
@@ -753,7 +755,6 @@ int main(int argc, char **argv) {
         case PRINT: {
             h = read_headers(argc, argv, 0);
             h_size = header_size(h);
-        print:
             if (is_tty && !fork_child(1)) {
                 execlp("less", "less", NULL);
                 die("exec failed: %s\n", errstr);
@@ -836,7 +837,7 @@ int main(int argc, char **argv) {
                     int r = fread(record, sizeof(long long), h.field_count, file);
                     if (!r && feof(file)) break;
                     dieif(r < h.field_count,
-                          "unexpected eof in %s: %s\n", argv[i], errstr);
+                          "unexpected eof %s: %s\n", argv[i], errstr);
                     if (*pre) printf(pre, line_number++, delim);
                     for (int j = 0; j < h.field_count; j++) {
                         switch (h.field_specs[j].type) {
@@ -910,7 +911,7 @@ int main(int argc, char **argv) {
                     int r = fread(record, sizeof(long long), h.field_count, file);
                     if (!r && feof(file)) break;
                     dieif(r < h.field_count,
-                          "unexpected eof in %s: %s\n", argv[i], errstr);
+                          "unexpected eof %s: %s\n", argv[i], errstr);
                     for (int j = 0; j < n; j++)
                         fwrite1(record + cut[j], sizeof(long long), stdout);
                 }
@@ -952,7 +953,7 @@ int main(int argc, char **argv) {
                         continue;
                     };
                     dieif(r < field_counts[i],
-                          "unexpected eof in %s: %s\n", argv[i], errstr);
+                          "unexpected eof %s: %s\n", argv[i], errstr);
                     fwriten(record, sizeof(long long), field_counts[i], stdout);
                 }
                 dieif(done && done < argc, "unequal records in inputs\n");
@@ -1001,12 +1002,13 @@ int main(int argc, char **argv) {
                         int r = fread(record, sizeof(long long), h.field_count, file);
                         if (!r && feof(file)) break;
                         dieif(r < h.field_count,
-                              "unexpected eof in %s: %s\n", argv[i], errstr);
+                              "unexpected eof %s: %s\n", argv[i], errstr);
                         fwriten(record, sizeof(long long), h.field_count, tmp);
                     }
                     free(record);
                     dieif(fseeko(tmp, h_size, SEEK_SET), "seek error: %s", errstr);
                     dieif(dup2(fileno(tmp), fileno(file)) == -1, "dup2 failed: %s\n", errstr);
+                    file = files[i] = tmp;
                 }
                 struct stat fs;
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
@@ -1022,7 +1024,7 @@ int main(int argc, char **argv) {
                 dieif(mapped == MAP_FAILED, "mmap failed for %s: %s\n", argv[i], errstr);
                 dieif(memcmp(mapped, &preamble, sizeof(preamble_t)), "invalid odb file\n");
 
-                long long *data = (long long*)(mapped+h_size);
+                long long *data = (long long*)(mapped + h_size);
                 size_t n = (fs.st_size-h_size)/(h.field_count*sizeof(long long));
                 su_smoothsort(data, 0, n, lt_records, swap_records);
 
@@ -1030,9 +1032,8 @@ int main(int argc, char **argv) {
                       "munmap failed for %s: %s\n", argv[i], errstr);
             }
             fields_arg = NULL;
-            if (quiet) return 0;
-            if (is_tty) goto print;
-            else goto slice;
+            if (!quiet) goto slice;
+            return 0;
         }
 
         case HELP:
