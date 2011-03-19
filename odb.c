@@ -327,7 +327,8 @@ FILE *fopenr_arg(int argc, char **argv, int i, int try_write) {
     if (files[i]) {
         if (seekable(files[i])) {
             off_t offset = ftello(files[i]);
-            files[i] = freopen(NULL, "r", files[i]);
+            char *mode = try_write && writable[i] ? "r+" : "r";
+            files[i] = freopen(NULL, mode, files[i]);
             dieif(!files[i], "error reopening %s: %s\n", argv[i], errstr);
             dieif(fseeko(files[i], offset, SEEK_SET),
                   "seek error for %s: %s\n", argv[i], errstr);
@@ -984,6 +985,21 @@ int main(int argc, char **argv) {
 
             FILE *file;
             for (int i = 0; file = fopenr_arg(argc, argv, i, 1); i++) {
+                if (!seekable(file)) {
+                    FILE *tmp = tmpfile();
+                    write_header(tmp, h.field_count, h.field_specs);
+                    long long *record = malloc(h.field_count*sizeof(long long));
+                    for (;;) {
+                        int r = fread(record, sizeof(long long), h.field_count, file);
+                        if (!r && feof(file)) break;
+                        dieif(r < h.field_count,
+                              "unexpected eof in %s: %s\n", argv[i], errstr);
+                        fwriten(record, sizeof(long long), h.field_count, tmp);
+                    }
+                    free(record);
+                    dieif(fseeko(tmp, h_size, SEEK_SET), "seek error: %s", errstr);
+                    dieif(dup2(fileno(tmp), fileno(file)) == -1, "dup2 failed: %s\n", errstr);
+                }
                 struct stat fs;
                 dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
 
