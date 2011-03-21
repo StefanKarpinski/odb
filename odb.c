@@ -39,9 +39,7 @@ static const char *const cmdstr =
     "  encode     Encode data to ODB format\n"
     "  decode     Decode data from ODB format\n"
     "  print      Print data in tabular format\n"
-    "  cat        Concatenate files with like schemas\n"
-    "  cut        Cut selected columns\n"
-    "  slice      Slice rows by offset, stride and count\n"
+    "  cat        Output data from files with like schemas\n"
     "  paste      Paste columns from different files\n"
     "  join       Join files on specified fields\n"
     "  sort       Sort by specified fields (in place)\n"
@@ -224,7 +222,7 @@ typedef enum {
     ENCODE,
     DECODE,
     PRINT,
-    SLICE,
+    CAT,
     PASTE,
     JOIN,
     SORT,
@@ -239,9 +237,8 @@ cmd_t parse_cmd(char *str) {
            !strcmp(str, "encode")  ? ENCODE  :
            !strcmp(str, "decode")  ? DECODE  :
            !strcmp(str, "print")   ? PRINT   :
-           !strcmp(str, "cat")     ? SLICE   :
-           !strcmp(str, "cut")     ? SLICE   :
-           !strcmp(str, "slice")   ? SLICE   :
+           !strcmp(str, "cat")     ? CAT     :
+           !strcmp(str, "cut")     ? CAT     :
            !strcmp(str, "paste")   ? PASTE   :
            !strcmp(str, "join")    ? JOIN    :
            !strcmp(str, "sort")    ? SORT    :
@@ -624,12 +621,12 @@ void type_as_float(field_type_t type, field_spec_t *specs, size_t n) {
 }
 
 #define pipe_to_print(cmd) ((cmd) == ENCODE && !extract || \
-                            (cmd) == SLICE || cmd == PASTE || \
+                            (cmd) == CAT || cmd == PASTE || \
                             (cmd) == SORT && !quiet)
 
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
-    cmd_t cmd = SLICE;
+    cmd_t cmd = CAT;
     if (argc >= 1) {
         cmd = parse_cmd(argv[0]);
         argv++; argc--;
@@ -958,7 +955,7 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        case SLICE: {
+        case CAT: {
             int n;
             cut_t *cut;
             h = read_headers(argc, argv, 0);
