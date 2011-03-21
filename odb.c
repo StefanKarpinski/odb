@@ -76,7 +76,8 @@ static char *delim = "\t";
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
 static int extract = 0;
-static range_t range = {0,1,LLONG_MAX};
+static range_t range = {1,1,-1};
+static long long count = LLONG_MAX;
 static long long line_number = 1;
 static int print_line_numbers = 0;
 static char float_format_char = 'f';
@@ -120,19 +121,18 @@ range_t make_range(long long start, long long step, long long stop) {
 }
 
 range_t parse_range(char *str) {
-    // TODO: fix range parsing
     char *p = str;
     long long a = 1;
-    if (*p == ':') p++;
-    else a = parse_ll(&p);
-    if (!*p) return *str == ':' ?
-        make_range(a,1,LLONG_MAX) :
-        make_range(a,1,a);
+    if (*p == ':') { p++; goto post_a; };
+    a = parse_ll(&p);
+    if (!*p) return make_range(a,1,a);
     if (*p++ != ':') goto invalid;
-    if (!*p) return make_range(a,1,LLONG_MAX);
+post_a:
+    if (!*p) return make_range(a,1,-1);
     long long b = parse_ll(&p);
     if (!*p) return make_range(a,1,b);
     if (*p++ != ':') goto invalid;
+    if (!*p) return make_range(a,b,-1);
     long long c = parse_ll(&p);
     if (!*p) return make_range(a,b,c);
 invalid:
@@ -176,13 +176,15 @@ void parse_opts(int *argcp, char ***argvp) {
                 break;
             case 'r':
                 range = parse_range(optarg);
-                dieif(range.step == 0, "invalid range: step zero\n");
+                dieif(!range.start, "invalid range: start zero\n");
+                dieif(!range.step, "invalid range: step zero\n");
+                dieif(!range.stop, "invalid range: stop zero\n");
                 break;
             case 'n':
-                // TODO: parse count
+                count = parse_ll(&optarg);
                 break;
             case 'N':
-                if (optarg) line_number = atoi(optarg);
+                if (optarg) line_number = parse_ll(&optarg);
                 print_line_numbers = 1;
                 break;
             case 'e':
@@ -215,9 +217,6 @@ void parse_opts(int *argcp, char ***argvp) {
                 die("unhandled option -- %c\n", c);
         }
     }
-    range.start -= line_number;
-    range.stop -= line_number;
-    if (range.start < 0) range.start = 0;
     *argvp += optind;
     *argcp -= optind;
 }
@@ -957,32 +956,50 @@ int main(int argc, char **argv) {
             FILE *file;
             long long *record = malloc(h.field_count*sizeof(long long));
             for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
-                if (seekable(file)) {
-                    off_t ff = range.start*h.field_count*sizeof(long long);
+                const int is_seekable = seekable(file);
+                range_t r = range;
+                if (is_seekable) {
+                    if (r.start < 0 || r.stop < 0) {
+                        struct stat fs;
+                        dieif(fstat(fileno(file), &fs), "stat error for %s: %s\n", argv[i], errstr);
+                        off_t end = (fs.st_size - h_size)/(h.field_count*sizeof(long long)) + 1;
+                        if (r.start < 0) r.start += end;
+                        if (r.stop  < 0) r.stop  += end;
+                        if (r.start < 0) r.start = 1;
+                    }
+                    off_t ff = (r.start-1)*h.field_count*sizeof(long long);
                     fseeko(file, ff, SEEK_CUR);
                 } else {
-                    dieif(range.step < 0, "unseekable file with negative stride\n");
-                    for (int k = 0; k < range.start; k++) {
+                    dieif(r.start < 0 && r.start != -1 || r.stop  < 0 && r.stop  != -1,
+                          "negative range offsets cannot be used with unseekable inputs\n");
+                    dieif(r.step < 0,
+                          "negative range strides cannot be used with unseekable inputs\n");
+                    if (r.start == -1) break;
+                    if (r.stop  == -1) r.stop = LLONG_MAX;
+
+                    for (int k = 0; k < r.start-1; k++) {
                         int r = fread(record, sizeof(long long), h.field_count, file);
                         if (!r && feof(file)) break;
                         dieif(r < h.field_count,
                               "unexpected eof %s: %s\n", argv[i], errstr);
                     }
                 }
-                for (long long j = 0;; j++) {
-                    off_t x = range.start + j*range.step;
-                    if (range.step < 0 ? x < range.stop : x > range.stop) break;
-                    int r = fread(record, sizeof(long long), h.field_count, file);
-                    if (!r && feof(file)) break;
-                    dieif(r < h.field_count,
+                for (long long j = 0; j < count; j++) {
+                    off_t x = r.start + j*r.step;
+                    if (r.step < 0 ? x < r.stop : x > r.stop) break;
+
+                    int rn = fread(record, sizeof(long long), h.field_count, file);
+                    if (!rn && feof(file)) break;
+                    dieif(rn < h.field_count,
                           "unexpected eof %s: %s\n", argv[i], errstr);
                     for (int k = 0; k < n; k++)
                         fwrite1(record + cut[k], sizeof(long long), stdout);
-                    if (seekable(file)) {
-                        off_t ff = (range.step-1)*h.field_count*sizeof(long long);
+
+                    if (is_seekable) {
+                        off_t ff = (r.step-1)*h.field_count*sizeof(long long);
                         fseeko(file, ff, SEEK_CUR);
                     } else {
-                        for (int k = 0; k < range.step-1; k++) {
+                        for (int k = 0; k < r.step-1; k++) {
                             int r = fread(record, sizeof(long long), h.field_count, file);
                             if (!r && feof(file)) break;
                             dieif(r < h.field_count,
@@ -1113,7 +1130,7 @@ int main(int argc, char **argv) {
             long long *records = malloc(argc*h.field_count*sizeof(long long));
             int *done = calloc(argc, sizeof(int));
             int donecount = 0;
-            for (int i = 0; file = fopenr_arg(argc, argv, i, 1); i++) {
+            for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
                 int r = fread(records + i*h.field_count,
                               sizeof(long long), h.field_count, file);
                 if (!r && feof(file)) {
