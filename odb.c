@@ -596,10 +596,11 @@ void type_as_float(field_type_t type, field_spec_t *specs, size_t n) {
 
 int main(int argc, char **argv) {
     parse_opts(&argc,&argv);
-    dieif(argc < 1, "usage: %s\n", usage);
-
-    cmd_t cmd = parse_cmd(argv[0]);
-    argv++; argc--;
+    cmd_t cmd = SLICE;
+    if (argc >= 1) {
+        cmd = parse_cmd(argv[0]);
+        argv++; argc--;
+    }
 
     int is_tty = tty < 0 ? 0 : tty || isatty(fileno(stdout));
     if (is_tty && pipe_to_print(cmd) && !fork_child(0)) {
