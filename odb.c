@@ -45,8 +45,6 @@ static const char *const cmdstr =
     "  paste      Paste columns from different files\n"
     "  join       Join files on specified fields\n"
     "  sort       Sort by specified fields (in place)\n"
- // "  rename     Rename fields (in place)\n"
- // "  cast       Cast fields as different types (in place)\n"
     "  help       Print this message\n"
 ;
 
@@ -267,7 +265,8 @@ typedef enum {
     FLOAT,
     STRING,
     TIMESTAMP,
-    DATE
+    DATE,
+    UNSPECIFIED
 } field_type_t;
 
 char *typestr(field_type_t t) {
@@ -275,7 +274,7 @@ char *typestr(field_type_t t) {
     return typestrs[t];
 }
 
-field_type_t parse_type(char *str) {
+field_type_t parse_type(const char *const str) {
     for (field_type_t t = 0; t < n_types; t++)
         if (!strcmp(typestrs[t], str)) return t;
     die("invalid type: %s\n", str);
@@ -288,9 +287,11 @@ typedef struct {
 
 static const preamble_t preamble = {"odb", 0x0123456789abcdef};
 
+#define name_size (256-sizeof(field_type_t))
+
 typedef struct {
     field_type_t type;
-    char name[256-sizeof(field_type_t)];
+    char name[name_size];
 } __attribute__ ((__packed__)) field_spec_t;
 
 field_spec_t parse_field_spec(const char *const str) {
@@ -299,11 +300,44 @@ field_spec_t parse_field_spec(const char *const str) {
     char *colon = strchr(str, ':');
     dieif(!colon, "invalid field spec: %s\n", str);
     int n = colon++ - str;
-    dieif(n >= sizeof(spec.name), "field name too long: %s\n", str);
+    dieif(n >= name_size, "field name too long: %s\n", str);
     memcpy(spec.name, str, n);
     spec.type = parse_type(colon);
     return spec;
 }
+
+typedef struct {
+    char from_name[name_size];
+    char to_name[name_size];
+    field_type_t to_type;
+} cut_spec_t;
+
+cut_spec_t parse_cut_spec(const char *str) {
+    cut_spec_t spec;
+    bzero(&spec, sizeof(spec));
+    spec.to_type = UNSPECIFIED;
+    off_t n = strcspn(str, "=:");
+    dieif(n >= name_size, "invalid field: %s\n", str);
+    memcpy(spec.from_name, str, n);
+    if (str[n] != '=') memcpy(spec.to_name, str, n);
+    if (!str[n]) return spec;
+    if (str[n] == '=') {
+        str += n + 1;
+        n = strcspn(str, "=:");
+        dieif(n >= name_size, "field name too long: %s\n", str);
+        memcpy(spec.to_name, str, n);
+    }
+    if (str[n]) {
+        dieif(str[n] != ':', "invalid field cut: %s\n", str);
+        spec.to_type = parse_type(str + n + 1);
+    }
+    return spec;
+}
+
+typedef struct {
+    int from;
+    field_spec_t field_spec;
+} cut_t;
 
 char *get_line(FILE *file, char **buffer, size_t *len) {
 #if defined(__MACOSX__) || defined(__APPLE__)
@@ -925,31 +959,42 @@ int main(int argc, char **argv) {
         }
 
         case SLICE: {
-            int n, *cut;
+            int n;
+            cut_t *cut;
             h = read_headers(argc, argv, 0);
             h_size = header_size(h);
         slice:
             if (!fields_arg) {
                 n = h.field_count;
-                cut = malloc(n*sizeof(int));
-                for (int i = 0; i < h.field_count; i++) cut[i] = i;
+                cut = malloc(n*sizeof(cut_t));
+                for (int i = 0; i < h.field_count; i++) {
+                    cut[i].field_spec = h.field_specs[i];
+                    cut[i].from = i;
+                }
             } else {
                 n = strcnt(fields_arg, ',') + 1;
-                cut = malloc(n*sizeof(int));
+                cut = malloc(n*sizeof(cut_t));
                 for (int i = 0; i < n; i++) {
                     char *comma = strchr(fields_arg, ',');
                     if (comma) *comma = '\0';
-                    cut[i] = -1;
-                    for (int j = 0; j < h.field_count; j++)
-                        if (!strcmp(fields_arg, h.field_specs[j].name))
-                            cut[i] = j;
-                    dieif(cut[i] == -1, "invalid field: %s\n", fields_arg);
+                    cut_spec_t c = parse_cut_spec(fields_arg);
+                    cut[i].from = -1;
+                    for (int j = 0; j < h.field_count; j++) {
+                        if (!strcmp(c.from_name, h.field_specs[j].name)) {
+                            cut[i].from = j;
+                            memcpy(cut[i].field_spec.name, c.to_name, name_size);
+                            cut[i].field_spec.type = c.to_type != UNSPECIFIED ?
+                                c.to_type : h.field_specs[j].type;
+                            break;
+                        }
+                    }
+                    dieif(cut[i].from == -1, "invalid field cut: %s\n", fields_arg);
                     fields_arg = comma + 1;
                 }
             }
 
             field_spec_t *specs = malloc(n*sizeof(field_spec_t));
-            for (int i = 0; i < n; i++) specs[i] = h.field_specs[cut[i]];
+            for (int i = 0; i < n; i++) specs[i] = cut[i].field_spec;
             write_header(stdout, n, specs);
             free(specs);
 
@@ -993,7 +1038,7 @@ int main(int argc, char **argv) {
                     dieif(rn < h.field_count,
                           "unexpected eof %s: %s\n", argv[i], errstr);
                     for (int k = 0; k < n; k++)
-                        fwrite1(record + cut[k], sizeof(long long), stdout);
+                        fwrite1(record + cut[k].from, sizeof(long long), stdout);
 
                     if (is_seekable) {
                         off_t ff = (r.step-1)*h.field_count*sizeof(long long);
