@@ -63,14 +63,20 @@ static const char *const optstr =
     " -T --timestamp=<fmt>      Use <fmt> as a timestamp format\n"
     " -D --date=<fmt>           Use <fmt> as a date format\n"
     " -q --quiet                Suppress output (sort, rename, cast)\n"
-    " -t --tty                  Force acting as for a TTY\n"
+    " -y --tty                  Force acting as for a TTY\n"
+    " -Y --no-tty               Force acting as not for a TTY\n"
     " -h --help                 Print this message\n"
 ;
+
+typedef struct {
+    off_t start, step, stop;
+} range_t;
 
 static char *delim = "\t";
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
 static int extract = 0;
+static range_t range = {0,1,LLONG_MAX};
 static long long line_number = 1;
 static int print_line_numbers = 0;
 static char float_format_char = 'f';
@@ -79,8 +85,62 @@ static char *date_fmt = "%F";
 static int quiet = 0;
 static int tty = 0;
 
+char *ltrunc(char *line) {
+    char *nl = strchr(line, '\n');
+    if (nl) *nl = '\0';
+    return line;
+}
+
+long long parse_ll(char **str) {
+    errno = 0;
+    long long v = strtoll(*str, str, 10);
+    dieif(errno == EINVAL && v == 0, "invalid integer: %s\n", ltrunc(*str));
+    dieif(errno == ERANGE && v == LLONG_MIN, "integer underflow: %s\n", ltrunc(*str));
+    dieif(errno == ERANGE && v == LLONG_MAX, "integer overflow: %s\n", ltrunc(*str));
+    return v;
+}
+
+double parse_d(char **str) {
+    char *p;
+    errno = 0;
+    double v = strtod(*str, &p);
+    dieif(p == *str && v == 0.0, "invalid float: %s\n", ltrunc(*str));
+    dieif(errno == ERANGE && v == 0.0, "float underflow: %s\n", ltrunc(*str));
+    dieif(errno == ERANGE && abs(v) == HUGE_VAL, "float overflow: %s\n", ltrunc(*str));
+    *str = p;
+    return v;
+}
+
+range_t make_range(long long start, long long step, long long stop) {
+    range_t r;
+    r.start = start;
+    r.step = step;
+    r.stop = stop;
+    return r;
+}
+
+range_t parse_range(char *str) {
+    // TODO: fix range parsing
+    char *p = str;
+    long long a = 1;
+    if (*p == ':') p++;
+    else a = parse_ll(&p);
+    if (!*p) return *str == ':' ?
+        make_range(a,1,LLONG_MAX) :
+        make_range(a,1,a);
+    if (*p++ != ':') goto invalid;
+    if (!*p) return make_range(a,1,LLONG_MAX);
+    long long b = parse_ll(&p);
+    if (!*p) return make_range(a,1,b);
+    if (*p++ != ':') goto invalid;
+    long long c = parse_ll(&p);
+    if (!*p) return make_range(a,b,c);
+invalid:
+    die("invalid range: %s\n", str);
+}
+
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "d:f:s:xr:n:N::egT::D::qth";
+    static char* shortopts = "d:f:s:xr:n:N::egT::D::qyYh";
     static struct option longopts[] = {
         { "delim",          required_argument, 0, 'd' },
         { "fields",         required_argument, 0, 'f' },
@@ -94,7 +154,8 @@ void parse_opts(int *argcp, char ***argvp) {
         { "timestamp",      required_argument, 0, 'T' },
         { "date",           required_argument, 0, 'D' },
         { "quiet",          no_argument,       0, 'q' },
-        { "tty",            no_argument,       0, 't' },
+        { "tty",            no_argument,       0, 'y' },
+        { "no-tty",         no_argument,       0, 'y' },
         { "help",           no_argument,       0, 'h' },
         { 0, 0, 0, 0 }
     };
@@ -114,7 +175,8 @@ void parse_opts(int *argcp, char ***argvp) {
                 extract = 1;
                 break;
             case 'r':
-                // TODO: parse range
+                range = parse_range(optarg);
+                dieif(range.step == 0, "invalid range: step zero\n");
                 break;
             case 'n':
                 // TODO: parse count
@@ -138,8 +200,11 @@ void parse_opts(int *argcp, char ***argvp) {
             case 'q':
                 quiet = 1;
                 break;
-            case 't':
+            case 'y':
                 tty = 1;
+                break;
+            case 'Y':
+                tty = -1;
                 break;
             case 'h':
                 printf("%s\n\ncommands:\n%s\noptions:\n%s\n", usage, cmdstr, optstr);
@@ -150,6 +215,9 @@ void parse_opts(int *argcp, char ***argvp) {
                 die("unhandled option -- %c\n", c);
         }
     }
+    range.start -= line_number;
+    range.stop -= line_number;
+    if (range.start < 0) range.start = 0;
     *argvp += optind;
     *argcp -= optind;
 }
@@ -397,12 +465,6 @@ void swap_records(void *d, size_t a, size_t b) {
     }
 }
 
-char *ltrunc(char *line) {
-    char *nl = strchr(line, '\n');
-    if (nl) *nl = '\0';
-    return line;
-}
-
 typedef struct {
     off_t *offsets;
     off_t index;
@@ -539,7 +601,7 @@ int main(int argc, char **argv) {
     cmd_t cmd = parse_cmd(argv[0]);
     argv++; argc--;
 
-    int is_tty = tty || isatty(fileno(stdout));
+    int is_tty = tty < 0 ? 0 : tty || isatty(fileno(stdout));
     if (is_tty && pipe_to_print(cmd) && !fork_child(0)) {
         argc = 0;
         cmd = PRINT;
@@ -678,29 +740,13 @@ int main(int argc, char **argv) {
                     for (int j = 0; j < n; j++) {
                         switch (specs[j].type) {
                             case INTEGER: {
-                                errno = 0;
-                                long long v = strtoll(line, &line, 10);
-                                dieif(errno == EINVAL && v == 0,
-                                      "invalid integer: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && v == LLONG_MIN,
-                                      "integer underflow: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && v == LLONG_MAX,
-                                      "integer overflow: %s\n", ltrunc(line));
+                                long long v = parse_ll(&line);
                                 if (!extract) fwrite1(&v, sizeof(v), stdout);
                                 break;
                             }
                             case FLOAT: {
-                                char *p;
-                                errno = 0;
-                                double v = strtod(line, &p);
-                                dieif(p == line && v == 0.0,
-                                      "invalid float: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && v == 0.0,
-                                      "float underflow: %s\n", ltrunc(line));
-                                dieif(errno == ERANGE && abs(v) == HUGE_VAL,
-                                      "float overflow: %s\n", ltrunc(line));
+                                double v = parse_d(&line);
                                 if (!extract) fwrite1(&v, sizeof(v), stdout);
-                                line = p;
                                 break;
                             }
                             case STRING: {
@@ -910,13 +956,38 @@ int main(int argc, char **argv) {
             FILE *file;
             long long *record = malloc(h.field_count*sizeof(long long));
             for (int i = 0; file = fopenr_arg(argc, argv, i, 0); i++) {
-                for (;;) {
+                if (seekable(file)) {
+                    off_t ff = range.start*h.field_count*sizeof(long long);
+                    fseeko(file, ff, SEEK_CUR);
+                } else {
+                    dieif(range.step < 0, "unseekable file with negative stride\n");
+                    for (int k = 0; k < range.start; k++) {
+                        int r = fread(record, sizeof(long long), h.field_count, file);
+                        if (!r && feof(file)) break;
+                        dieif(r < h.field_count,
+                              "unexpected eof %s: %s\n", argv[i], errstr);
+                    }
+                }
+                for (long long j = 0;; j++) {
+                    off_t x = range.start + j*range.step;
+                    if (range.step < 0 ? x < range.stop : x > range.stop) break;
                     int r = fread(record, sizeof(long long), h.field_count, file);
                     if (!r && feof(file)) break;
                     dieif(r < h.field_count,
                           "unexpected eof %s: %s\n", argv[i], errstr);
-                    for (int j = 0; j < n; j++)
-                        fwrite1(record + cut[j], sizeof(long long), stdout);
+                    for (int k = 0; k < n; k++)
+                        fwrite1(record + cut[k], sizeof(long long), stdout);
+                    if (seekable(file)) {
+                        off_t ff = (range.step-1)*h.field_count*sizeof(long long);
+                        fseeko(file, ff, SEEK_CUR);
+                    } else {
+                        for (int k = 0; k < range.step-1; k++) {
+                            int r = fread(record, sizeof(long long), h.field_count, file);
+                            if (!r && feof(file)) break;
+                            dieif(r < h.field_count,
+                                  "unexpected eof %s: %s\n", argv[i], errstr);
+                        }
+                    }
                 }
                 dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
             }
