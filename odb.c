@@ -1,14 +1,25 @@
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <stdarg.h>
 #include <getopt.h>
 #include <math.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/sysctl.h>
+
+#ifndef __APPLE__
+#include <stdio.h>
+#include <stdio_ext.h>
+#define fpurge(stream) __fpurge(stream)
+#endif
 
 // external dependencies:
 #include <cmph.h>
@@ -337,7 +348,7 @@ typedef struct {
 } cut_t;
 
 char *get_line(FILE *file, char **buffer, size_t *len) {
-#if defined(__MACOSX__) || defined(__APPLE__)
+#ifdef __APPLE__
   *buffer = fgetln(file,len);
   dieif(ferror(file), "error reading line: %s\n", errstr);
   return *buffer;
@@ -351,7 +362,6 @@ char *get_line(FILE *file, char **buffer, size_t *len) {
     die("error reading line: %s\n", errstr);
   }
 #endif
-  die("unknown get_line badness\n");
 }
 
 void fwriten(const void *restrict ptr, size_t size, size_t n, FILE *restrict stream) {
