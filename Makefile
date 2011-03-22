@@ -1,4 +1,4 @@
-CFLAGS = -g3
+CFLAGS = -g3 -I$(HOME)/usr/include -L$(HOME)/usr/lib
 
 odb: odb.c smoothsort.o
 	gcc $(CFLAGS) -std=gnu99 $^ -o $@ -lcmph
