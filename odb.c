@@ -349,18 +349,22 @@ typedef struct {
 
 char *get_line(FILE *file, char **buffer, size_t *len) {
 #ifdef __APPLE__
-  *buffer = fgetln(file,len);
-  dieif(ferror(file), "error reading line: %s\n", errstr);
-  return *buffer;
+    *buffer = fgetln(file,len);
+    dieif(ferror(file), "error reading line: %s\n", errstr);
+    return *buffer;
 #else
-  int r = getline(buffer,len,file);
-  if (r != -1) return *buffer;
-  if (feof(file)) {
-    if (buffer) free(*buffer);
-    return *buffer = NULL;
-  } else if (ferror(file)) {
-    die("error reading line: %s\n", errstr);
-  }
+    size_t n;
+    int r = getline(buffer,&n,file);
+    if (r != -1) {
+        *len = strlen(*buffer);
+        return *buffer;
+    }
+    if (feof(file)) {
+        if (buffer) free(*buffer);
+        return *buffer = NULL;
+    } else if (ferror(file)) {
+        die("error reading line: %s\n", errstr);
+    }
 #endif
 }
 
@@ -794,7 +798,7 @@ int main(int argc, char **argv) {
                                 off_t len = buffer+length-line-1;
                                 if (j < n-1) {
                                     char *end = memchr(line, delim[0], len);
-                                    dieif(!end, "tab expected after: %s\n", ltrunc(line));
+                                    dieif(!end, "tab expected after: %s\n", ltrunc(buffer));
                                     len = end-line;
                                 }
                                 if (extract) {
@@ -812,7 +816,7 @@ int main(int argc, char **argv) {
                                 struct tm st;
                                 char *fmt = timelikefmt(specs[j].type);
                                 char *p = strptime(line, fmt, &st);
-                                dieif(!p, "invalid timestamp: %s\n", ltrunc(line));
+                                dieif(!p, "invalid timestamp: %s\n", ltrunc(buffer));
                                 double v = (double) timegm(&st);
                                 if (!extract) fwrite1(&v, sizeof(v), stdout);
                                 line = p;
@@ -824,12 +828,12 @@ int main(int argc, char **argv) {
                         if (j < n-1) {
                             if (line[0] != delim[0]) {
                                 char *delim_name = delim[0] == '\t' ? "tab" : "delimiter";
-                                die("%s expected: %s\n", delim_name, ltrunc(line));
+                                die("%s expected: %s\n", delim_name, ltrunc(buffer));
                             }
                             line++;
                         } else {
                             dieif(!(line[0] == '\n' || line[0] == '\r'),
-                                  "end of line expected: %s\n", ltrunc(line));
+                                  "end of line expected: %s\n", ltrunc(buffer));
                         }
                     }
                 }
