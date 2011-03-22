@@ -5,17 +5,17 @@ Let's say you have the following tab-separated data format:
   foo     bar     1    2    1.23
   three   abacus  0   -1   -0.25
 
-The columns a and b are strings, x and y are integers, and z is a float. The first thing you need to do is tell odb about all the possible string values found in your data since it stores strings as indexes into a string index file:
+The columns a and b are strings, x and y are integers, and z is a float. The first thing you need to do is tell odb about all the possible string values found in your data since it stores strings as indexes into a string index file. The easiest way to do this is to specify the data schema and use the -x option to extract all the string values:
 
-  $ (cut -f1 data.tsv; cut -f2 data.tsv) | sort -u | odb strings
+  $ odb encode -fa:string,b:string,x:int,y:int,z:float data.tsv -x | sort -u | odb strings
 
-By default, this creates a file called "strings.idx" that allows easy, efficient handling of string data. Next, we can encode the TSV data into ODB format:
+By default, this creates a file called "strings.idx" that allows easy and efficient encoding and decoding of string data, representing every string as a 64-bit value. Next, we can encode the TSV data into ODB format:
 
-  $ odb encode -fa:string,b:string,x:int,y:int,z:float data.tsv >data.odb
+  $ odb encode -fa:string,b:string,x:int,y:int,z:float data.tsv >data
 
 Now you have a working, usable ODB data file. To see what's in it, use the odb cat command:
 
-  $ odb cat data.odb
+  $ odb cat data
    a      b                         x                    y             z
   ------------------------------------------------------------------------------
    foo    bar                       1                    2             1.230000

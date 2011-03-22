@@ -58,7 +58,7 @@ static const char *const optstr =
     " -g --float-g              Use %g to print floats\n"
     " -T --timestamp=<fmt>      Use <fmt> as a timestamp format\n"
     " -D --date=<fmt>           Use <fmt> as a date format\n"
-    " -q --quiet                Suppress output (sort, rename, cast)\n"
+    " -q --quiet                Suppress output for sort\n"
     " -y --tty                  Force acting as for a TTY\n"
     " -Y --no-tty               Force acting as not for a TTY\n"
     " -h --help                 Print this message\n"
