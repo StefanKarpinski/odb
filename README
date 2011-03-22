@@ -1,11 +1,13 @@
-Let's say you have the following tab-separated data format:
+ENCODING
+========
 
-  a       b       x    y    z
-  ------------------------------
-  foo     bar     1    2    1.23
-  three   abacus  0   -1   -0.25
+Let's say you have the following tab-separated data format in a file called "data.tsv":
 
-The columns a and b are strings, x and y are integers, and z is a float. The first thing you need to do is tell odb about all the possible string values found in your data since it stores strings as indexes into a string index file. The easiest way to do this is to specify the data schema and use the -x option to extract all the string values:
+  foo bar 1   2   1.230000
+  three   abacus  0   -1  -0.250000
+  foo baz 1   0   -1.000000
+
+Call the columns a, b, x, y, and z. Suppose that a and b are string values, x and y are integer values, and z is a floating point value. The first thing you need to do is tell odb about all the possible string values found in your data since it stores strings as indexes into a string index file. The easiest way to do this is to specify the data schema and use the -x option to extract all the string values:
 
   $ odb encode -fa:string,b:string,x:int,y:int,z:float data.tsv -x | sort -u | odb strings
 
@@ -20,5 +22,201 @@ Now you have a working, usable ODB data file. To see what's in it, use the odb c
   ------------------------------------------------------------------------------
    foo    bar                       1                    2             1.230000
    three  abacus                    0                   -1            -0.250000
+   foo    baz                       1                    0            -1.000000
 
-Coming soon: explanations of more commands.
+If you want to get tab-separated values back, you can use the invese decode operation:
+
+  $ odb decode data
+  foo bar 1   2   1.230000
+  three   abacus  0   -1  -0.250000
+  foo baz 1   0   -1.000000
+
+Odb also supports timestamp and date field types, which can be input and output in various formats, specified using the -T option for timestamps and -D option for dates, according to the strftime and strptime standard C library functions (see man strftime for details).
+
+
+SORTING
+=======
+
+Now let's say you want to sort the data by various columns. Just use the sort command:
+
+  $ odb sort data -f a,b
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+
+  $ odb sort data -f b,a
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   three  abacus                    0                   -1            -0.250000
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+
+  $ odb sort data -f x,y
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   three  abacus                    0                   -1            -0.250000
+   foo    baz                       1                    0            -1.000000
+   foo    bar                       1                    2             1.230000
+
+  $ odb sort data -f -z
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+
+The names of fields are separated by commas, and prefixing one with a minus sign sorts by descending order instead of ascending order. Any set and order of fields can be used for sorting. It should be noted that the data is sorted in place: the actual data file is altered when the sort occurs, so that if you cat it after a sort operation, it will have the order of the most recent sort:
+
+  $ odb cat data
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+
+To avoid sorting data in place, you can cat the file data to the sort command, which will sort the data stream but not affect the original file:
+
+  $ odb cat data | odb sort -f -a,b
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   three  abacus                    0                   -1            -0.250000
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+
+  $ odb cat data
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+
+
+SLICING
+=======
+
+Like the UNIX cat command, you can use odb cat to concatenate files with like schemas. This includes concatenating a file with itself, thereby effectively repeating every record twice:
+
+  $ odb cat data data
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+
+
+Unlike the UNIX cat command, however, the odb cat command can do a lot more than just concatenate file contents. It also subsumes the functionality of the cut, tac, head and tail commands, and much more. Using the -f option lets you select which fields to output, as well as their order:
+
+  $ odb cat data -f z,b,a
+               z        b      a
+  ------------------------------------
+               1.230000 bar    foo
+              -1.000000 baz    foo
+              -0.250000 abacus three
+
+The command always uses the order given and respects repeated fields:
+
+  $ odb cat data -f b,a,b
+   b      a      b
+  ----------------------
+   bar    foo    bar
+   baz    foo    baz
+   abacus three  abacus
+
+It also allows you to rename fields:
+
+  $ odb cat data -f b,a,b=c
+   b      a      b
+  ----------------------
+   bar    foo    bar
+   baz    foo    baz
+   abacus three  abacus
+
+It also allows you to reinterpret fields as being of a different type. In particular, strings are internally encoded as 64-bit integer indices:
+
+  $ odb cat data -f a,a=i:int,b,b=j:int
+   a                         i b                         j
+  ---------------------------------------------------------
+   foo                       3 bar                       1
+   foo                       3 baz                       2
+   three                     4 abacus                    0
+
+You can also specify ranges of rows to output using the -r option, using a Matlab-like range notation start:step:stop. The start specifies the first row to output, step specifies how many rows to advance between rows to output, and stop specifies the largest row to be output. The start and stop offsets are 1-based with positive values counting from the first record and negative values counting from the last records. Abbreviated versions of the range notation include
+
+   notation         defaults
+  -------------------------------------------
+   :                start=1, step=1, stop=-1
+   :stop            start=1, step=1
+   start:           stop=-1, step=1
+   stop:start       step=1
+   :step:stop       start=1
+   start:step:      stop=-1
+
+If you want to output the first 2 records, for example, you can do this:
+
+  $ odb cat data -r :2
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+
+To output the last two rows, do this:
+
+  $ odb cat data -r -2:
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+
+Odd rows:
+
+  $ odb cat data -r 1:2:
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   three  abacus                    0                   -1            -0.250000
+
+Even rows:
+
+  $ odb cat data -r 2:2:
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    baz                       1                    0            -1.000000
+
+To output data inreversed order, like the tac command, use the range -1:-1:1 like so:
+
+  $ odb cat date -r -1:-1:1
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   three  abacus                    0                   -1            -0.250000
+   foo    baz                       1                    0            -1.000000
+   foo    bar                       1                    2             1.230000
+
+You can slice streamed data as well:
+
+  $ odb sort data data data | odb cat -r :2:
+   a      b                         x                    y             z
+  ------------------------------------------------------------------------------
+   foo    bar                       1                    2             1.230000
+   foo    bar                       1                    2             1.230000
+   foo    baz                       1                    0            -1.000000
+   three  abacus                    0                   -1            -0.250000
+   three  abacus                    0                   -1            -0.250000
+
+You cannot, however, use negative offsets other than -1, or negitive strides when slicing streamed data:
+
+  $ odb sort data data data | odb cat -r -2:2:
+  negative range offsets cannot be used with streamed inputs
+
+  $ odb sort data data data | odb cat -r -1:-1:1
+  negative range strides cannot be used with streamed inputs
+
+
+OTHER
+=====
+
+The paste command horizontally concatenates its argument data just like the UNIX paste command does. It's arguments do not have to have compatible schemas, but they should have the same number of rows. The join command (not yet implemented) does an inner join on multiple inputs by the fields given with the -f option.

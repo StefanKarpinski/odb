@@ -1,0 +1,4 @@
+- Implement join
+- Better configurability for display and output formatting
+- TSV input and output with a header row of name:type instead of using -f
+- Better and more documentation

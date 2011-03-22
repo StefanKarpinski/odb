@@ -1013,9 +1013,9 @@ int main(int argc, char **argv) {
                     fseeko(file, ff, SEEK_CUR);
                 } else {
                     dieif(r.start < 0 && r.start != -1 || r.stop  < 0 && r.stop  != -1,
-                          "negative range offsets cannot be used with unseekable inputs\n");
+                          "negative range offsets cannot be used with streamed inputs\n");
                     dieif(r.step < 0,
-                          "negative range strides cannot be used with unseekable inputs\n");
+                          "negative range strides cannot be used with streamed inputs\n");
                     if (r.start == -1) break;
                     if (r.stop  == -1) r.stop = LLONG_MAX;
 
