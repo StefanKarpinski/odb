@@ -59,6 +59,9 @@ static const char *const cmdstr =
 
 static const char *const optstr =
     " -d --delim=<char>         Delimit fields by <char>\n"
+    " -C --csv                  CSV encode/decode mode\n"
+    " -P --psql=<table>         PosgreSQL encode/decode mode\n"
+    " -M --mysql=<table>        MySQL encode/decode mode\n"
     " -f --fields=<fields>      Comma-sparated fields\n"
     " -s --strings=<file>       Use <file> as string index\n"
     " -x --extract              String extraction mode for encode\n"
@@ -75,10 +78,20 @@ static const char *const optstr =
     " -h --help                 Print this message\n"
 ;
 
+typedef enum {
+    DELIMITED,
+    TABLE,
+    CSV,
+    PSQL,
+    MYSQL
+} codec_t;
+
 typedef struct {
     off_t start, step, stop;
 } range_t;
 
+static codec_t codec = DELIMITED;
+static char *table_name = NULL;
 static char *delim = "\t";
 static char *fields_arg = NULL;
 static char *strings_file = "strings.idx";
@@ -147,9 +160,12 @@ invalid:
 }
 
 void parse_opts(int *argcp, char ***argvp) {
-    static char* shortopts = "d:f:s:xr:n:N::egT::D::qyYh";
+    static char* shortopts = "d:CP:M:f:s:xr:n:N::egT::D::qyYh";
     static struct option longopts[] = {
         { "delim",          required_argument, 0, 'd' },
+        { "csv",            no_argument,       0, 'C' },
+        { "psql",           required_argument, 0, 'P' },
+        { "mysql",          required_argument, 0, 'M' },
         { "fields",         required_argument, 0, 'f' },
         { "strings",        required_argument, 0, 's' },
         { "extract",        no_argument,       0, 'x' },
@@ -171,6 +187,17 @@ void parse_opts(int *argcp, char ***argvp) {
         switch(c) {
             case 'd':
                 delim = optarg;
+                break;
+            case 'C':
+                codec = CSV;
+                break;
+            case 'P':
+                codec = PSQL;
+                table_name = optarg;
+                break;
+            case 'M':
+                codec = MYSQL;
+                table_name = optarg;
                 break;
             case 'f':
                 fields_arg = optarg;
@@ -260,14 +287,6 @@ cmd_t parse_cmd(char *str) {
 
 const int n_types = 5;
 
-char *typestrs[] = {
-    "int",
-    "float",
-    "string",
-    "timestamp",
-    "date"
-};
-
 typedef enum {
     INTEGER,
     FLOAT,
@@ -276,6 +295,22 @@ typedef enum {
     DATE,
     UNSPECIFIED
 } field_type_t;
+
+char *typestrs[] = {
+    "int",
+    "float",
+    "string",
+    "timestamp",
+    "date"
+};
+
+char *psql_types[] = {
+    "bigint",
+    "double precision",
+    "text",
+    "timestamp",
+    "date"
+};
 
 char *typestr(field_type_t t) {
     if (t < 0 || n_types <= t) return "<unknown>";
@@ -655,6 +690,10 @@ int main(int argc, char **argv) {
         argc = 1;
         argv[0] = "-";
     }
+    if (cmd == PRINT) {
+        cmd = DECODE;
+        codec = TABLE;
+    }
 
     switch (cmd) {
 
@@ -757,18 +796,31 @@ int main(int argc, char **argv) {
         }
 
         case ENCODE: {
-            dieif(!fields_arg, "use -f to provide fields\n");
+            long long n;
+            field_spec_t *specs;
 
-            long long n = strcnt(fields_arg, ',') + 1;
-            field_spec_t *specs = malloc(n*sizeof(field_spec_t));
-            string_fields = 0;
-            for (int i = 0; i < n; i++) {
-                char *comma = strchr(fields_arg, ',');
-                if (comma) *comma = '\0';
-                specs[i] = parse_field_spec(fields_arg);
-                if (specs[i].type == STRING) string_fields++;
-                fields_arg = comma + 1;
+            switch (codec) {
+                case DELIMITED: {
+                    dieif(!fields_arg, "use -f to provide fields\n");
+                    n = strcnt(fields_arg, ',') + 1;
+                    specs = malloc(n*sizeof(field_spec_t));
+                    string_fields = 0;
+                    for (int i = 0; i < n; i++) {
+                        char *comma = strchr(fields_arg, ',');
+                        if (comma) *comma = '\0';
+                        specs[i] = parse_field_spec(fields_arg);
+                        if (specs[i].type == STRING) string_fields++;
+                        fields_arg = comma + 1;
+                    }
+                    break;
+                }
+                case TABLE: die("formated table encoding not supported\n");
+                case CSV:   die("CSV encoding not yet supported (try -d, instead)\n");
+                case PSQL:  die("PostgreSQL encoding not yet supported\n");
+                case MYSQL: die("MySQL encoding not yet supported\n");
+                default: die("unsupported codec\n");
             }
+
             if (!extract) {
                 write_header(stdout, n, specs);
                 if (string_fields) load_strings();
@@ -843,14 +895,9 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        case DECODE:
-        case PRINT: {
+        case DECODE: {
             h = read_headers(argc, argv, 0);
             h_size = header_size(h);
-            if (is_tty && !fork_child(1)) {
-                execlp("less", "less", NULL);
-                die("exec failed: %s\n", errstr);
-            }
             if (string_fields) load_strings();
 
             if (!timestamp_fmt)
@@ -861,67 +908,106 @@ int main(int argc, char **argv) {
             char *pre, *inter, *post;
             char *integer_format, *float_format, *string_format, *time_format;
 
-            if (cmd == DECODE) {
-                pre = print_line_numbers ? "%lld" : "";
-                inter = delim;
-                post = "\n";
-                integer_format = "%lld";
-                asprintf(&float_format, "%%.6%c", float_format_char);
-                string_format = "%s";
-                time_format = "%s";
-            } else {
-                pre = print_line_numbers ? "%8lld:    " : " ";
-                inter = " ";
-                post = "\n";
-                integer_format = "%20lld";
-                asprintf(&float_format, "%%20.6%c", float_format_char);
-                asprintf(&string_format, "%%-%ds", string_maxlen);
-                time_format = "%20s";
-
-                if (print_line_numbers)
-                    for (int k = 0; k < 12; k++) putchar(' ');
-
-                for (int j = 0; j < h.field_count; j++) {
-                    char *name = h.field_specs[j].name;
-                    size_t len = strlen(name);
-                    switch (h.field_specs[j].type) {
-                        case INTEGER:
-                        case TIMESTAMP:
-                        case DATE: {
-                            int space = 21 - strlen(name);
-                            for (int k = 0; k < space; k++) putchar(' ');
-                            fwriten(name, 1, len, stdout);
-                            break;
-                        }
-                        case FLOAT: {
-                            int space = 21 - strlen(name);
-                            for (int k = 0; k < space-7; k++) putchar(' ');
-                            fwriten(name, 1, len, stdout);
-                            if (j < h.field_count-1)
-                                for (int k = 0; k < 7; k++) putchar(' ');
-                            break;
-                        }
-                        case STRING: {
-                            int space = string_maxlen + 1 - strlen(name);
-                            putchar(' ');
-                            fwriten(name, 1, len, stdout);
-                            if (j < h.field_count-1)
-                                for (int k = 0; k < space-1; k++) putchar(' ');
-                            break;
-                        }
-                        default:
-                            die("unsupported type: %s (%d)\n",
-                                typestr(h.field_specs[j].type),
-                                h.field_specs[j].type)
-                    }
+            switch (codec) {
+                case DELIMITED:
+                case PSQL: {
+                    pre = print_line_numbers ? "%lld" : "";
+                    inter = delim;
+                    post = "\n";
+                    integer_format = "%lld";
+                    asprintf(&float_format, "%%.6%c", float_format_char);
+                    string_format = "%s";
+                    time_format = "%s";
+                    break;
                 }
-                putchar('\n');
+                case TABLE: {
+                    pre = print_line_numbers ? "%8lld:    " : " ";
+                    inter = " ";
+                    post = "\n";
+                    integer_format = "%20lld";
+                    asprintf(&float_format, "%%20.6%c", float_format_char);
+                    asprintf(&string_format, "%%-%ds", string_maxlen);
+                    time_format = "%20s";
+                    break;
+                }
+                case CSV:   die("CSV decoding not yet supported (try -d, instead)\n");
+                case MYSQL: die("MySQL decoding not yet supported\n");
+                default: die("unsupported codec\n");
+            }
 
-                int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
-                if (print_line_numbers) dashes += 12;
-                for (int j = 0; j < dashes; j++) putchar('-');
-                putchar('\n');
+            if (is_tty && !fork_child(1)) {
+                switch (codec) {
+                    case DELIMITED:
+                    case TABLE:
+                    case CSV:   execlp("less",  "less",  NULL); break;
+                    case PSQL:  execlp("psql",  "psql",  NULL); break;
+                    case MYSQL: execlp("mysql", "mysql", NULL); break;
+                    default: die("unsupported codec\n");
+                }
+                die("exec failed: %s\n", errstr);
+            }
 
+            switch (codec) {
+                case DELIMITED: break;
+                case TABLE: {
+                    if (print_line_numbers)
+                        for (int k = 0; k < 12; k++) putchar(' ');
+
+                    for (int j = 0; j < h.field_count; j++) {
+                        char *name = h.field_specs[j].name;
+                        size_t len = strlen(name);
+                        switch (h.field_specs[j].type) {
+                            case INTEGER:
+                            case TIMESTAMP:
+                            case DATE: {
+                                int space = 21 - strlen(name);
+                                for (int k = 0; k < space; k++) putchar(' ');
+                                fwriten(name, 1, len, stdout);
+                                break;
+                            }
+                            case FLOAT: {
+                                int space = 21 - strlen(name);
+                                for (int k = 0; k < space-7; k++) putchar(' ');
+                                fwriten(name, 1, len, stdout);
+                                if (j < h.field_count-1)
+                                    for (int k = 0; k < 7; k++) putchar(' ');
+                                break;
+                            }
+                            case STRING: {
+                                int space = string_maxlen + 1 - strlen(name);
+                                putchar(' ');
+                                fwriten(name, 1, len, stdout);
+                                if (j < h.field_count-1)
+                                    for (int k = 0; k < space-1; k++) putchar(' ');
+                                break;
+                            }
+                            default:
+                                die("unsupported type: %s (%d)\n",
+                                    typestr(h.field_specs[j].type),
+                                    h.field_specs[j].type)
+                        }
+                    }
+                    putchar('\n');
+
+                    int dashes = 21*(h.field_count-string_fields)+(string_maxlen+1)*string_fields+1;
+                    if (print_line_numbers) dashes += 12;
+                    for (int j = 0; j < dashes; j++) putchar('-');
+                    putchar('\n');
+                    break;
+                }
+                case PSQL: {
+                    printf("create table \"%s\" (\n", table_name);
+                    for (int j = 0; j < h.field_count; j++) {
+                        printf("  \"%s\" %s%s\n",
+                               h.field_specs[j].name,
+                               psql_types[h.field_specs[j].type],
+                               j < h.field_count-1 ? "," : "");
+                    }
+                    printf(");\n");
+                    printf("copy %s from stdin;\n", table_name);
+                    break;
+                }
+                default: die("unsupported codec\n");
             }
 
             FILE *file;
