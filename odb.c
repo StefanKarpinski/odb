@@ -63,15 +63,15 @@ static const char *const optstr =
     " -P --psql=<table>         PosgreSQL encode/decode mode\n"
     " -M --mysql=<table>        MySQL encode/decode mode\n"
     " -f --fields=<fields>      Comma-sparated fields\n"
-    " -s --strings=<file>       Use <file> as string index\n"
     " -x --extract              String extraction mode for encode\n"
+    " -s --strings=<file>       Use <file> as string index\n"
     " -r --range=<range>        Output a range slice of records\n"
     " -n --count=<n>            Output at most <n> records\n"
     " -N --line-numbers[=<b>]   Output with line numbers\n"
     " -e --float-e              Use %e to print floats\n"
     " -g --float-g              Use %g to print floats\n"
-    " -T --timestamp=<fmt>      Use <fmt> as a timestamp format\n"
-    " -D --date=<fmt>           Use <fmt> as a date format\n"
+    " -T --timestamp[=<fmt>]    Use <fmt> as a timestamp format\n"
+    " -D --date[=<fmt>]         Use <fmt> as a date format\n"
     " -q --quiet                Suppress output for sort\n"
     " -y --tty                  Force acting as for a TTY\n"
     " -Y --no-tty               Force acting as not for a TTY\n"
@@ -800,7 +800,7 @@ int main(int argc, char **argv) {
 
             switch (codec) {
                 case DELIMITED: {
-                    dieif(!fields_arg, "use -f to provide fields\n");
+                    dieif(!fields_arg, "use -f to provide a field schema\n");
                     n = strcnt(fields_arg, ',') + 1;
                     specs = malloc(n*sizeof(field_spec_t));
                     string_fields = 0;
