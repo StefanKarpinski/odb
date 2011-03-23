@@ -630,8 +630,6 @@ char *index_to_string(long long index) {
     return str;
 }
 
-typedef void (*fork_callback_t)(void);
-
 pid_t fork_child(int redirect_stderr) {
     int fd[2];
     dieif(pipe(fd), "pipe failed: %s\n", errstr);
