@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/sysctl.h>
@@ -478,24 +479,28 @@ FILE *fopenr_arg(int argc, char **argv, int i, int try_write) {
         writable = calloc(argc+1, sizeof(int*));
     }
     if (files[i]) {
+        writable[i] &= try_write;
         if (seekable(files[i])) {
             off_t offset = ftello(files[i]);
-            char *mode = try_write && writable[i] ? "r+" : "r";
+            char *mode = writable[i] ? "r+" : "r";
             files[i] = freopen(NULL, mode, files[i]);
             dieif(!files[i], "error reopening %s: %s\n", argv[i], errstr);
             dieif(fseeko(files[i], offset, SEEK_SET),
                   "seek error for %s: %s\n", argv[i], errstr);
         }
-        return files[i];
+        goto lock_and_return;
     }
     if (!strcmp(argv[i], "-")) return files[i] = stdin;
 
     char *mode = try_write ? "r+" : "r";
     files[i] = fopen(argv[i], mode);
-    if (!files[i] && try_write && errno == EACCES)
+    writable[i] = try_write && files[i];
+    if (try_write && !files[i] && errno == EACCES)
         files[i] = fopen(argv[i], "r");
-    else writable[i] = 1;
     dieif(!files[i], "error opening %s: %s\n", argv[i], errstr);
+lock_and_return:
+    dieif(flock(fileno(files[i]), writable[i] ? LOCK_EX : LOCK_SH) && errno != ENOTSUP,
+          "error locking %s: %s\n", argv[i], errstr);
     return files[i];
 }
 
@@ -1183,6 +1188,7 @@ int main(int argc, char **argv) {
                     int r = fread(record, sizeof(long long), field_counts[i], file);
                     if (!r && feof(file)) {
                         done++;
+                        dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
                         continue;
                     };
                     dieif(r < field_counts[i],
@@ -1263,6 +1269,8 @@ int main(int argc, char **argv) {
 
                 dieif(munmap(mapped, fs.st_size),
                       "munmap failed for %s: %s\n", argv[i], errstr);
+                dieif(flock(fileno(file), LOCK_SH),
+                      "error downgrading lock on %s: %s\n", argv[i], errstr);
             }
             fields_arg = NULL;
             if (quiet) return 0;
@@ -1277,6 +1285,7 @@ int main(int argc, char **argv) {
                 if (!r && feof(file)) {
                     done[i] = 1;
                     donecount++;
+                    dieif(fclose(file), "error closing %s: %s\n", argv[i], errstr);
                     break;
                 }
                 dieif(r < h.field_count,
@@ -1296,6 +1305,7 @@ int main(int argc, char **argv) {
                 if (!r && feof(files[min])) {
                     done[min] = 1;
                     donecount++;
+                    dieif(fclose(files[min]), "error closing %s: %s\n", argv[min], errstr);
                 } else {
                     dieif(r < h.field_count,
                           "unexpected eof %s: %s\n", argv[min], errstr);
