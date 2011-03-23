@@ -142,20 +142,28 @@ range_t make_range(long long start, long long step, long long stop) {
 }
 
 range_t parse_range(char *str) {
+    range_t r;
     char *p = str;
-    long long a = 1;
+    long long a = 0;
     if (*p == ':') { p++; goto post_a; };
     a = parse_ll(&p);
-    if (!*p) return make_range(a,1,a);
+    dieif(!a, "invalid range value zero: %s\n", str);
+    if (!*p) { r = make_range(a,1,a); goto fill_defaults; }
     if (*p++ != ':') goto invalid;
 post_a:
-    if (!*p) return make_range(a,1,-1);
+    if (!*p) { r = make_range(a,1,0); goto fill_defaults; }
     long long b = parse_ll(&p);
-    if (!*p) return make_range(a,1,b);
+    dieif(!b, "invalid range value zero: %s\n", str);
+    if (!*p) { r = make_range(a,1,b); goto fill_defaults; }
     if (*p++ != ':') goto invalid;
-    if (!*p) return make_range(a,b,-1);
+    if (!*p) { r = make_range(a,b,0); goto fill_defaults; }
     long long c = parse_ll(&p);
-    if (!*p) return make_range(a,b,c);
+    dieif(!c, "invalid range value zero: %s\n", str);
+    if (!*p) { r = make_range(a,b,c); goto fill_defaults; }
+fill_defaults:
+    if (!r.start) r.start = r.step > 0 ? +1 : -1;
+    if (!r.stop)  r.stop  = r.step > 0 ? -1 : +1;
+    return r;
 invalid:
     die("invalid range: %s\n", str);
 }
@@ -211,9 +219,6 @@ void parse_opts(int *argcp, char ***argvp) {
                 break;
             case 'r':
                 range = parse_range(optarg);
-                dieif(!range.start, "invalid range: start zero\n");
-                dieif(!range.step, "invalid range: step zero\n");
-                dieif(!range.stop, "invalid range: stop zero\n");
                 break;
             case 'n':
                 count = parse_ll(&optarg);

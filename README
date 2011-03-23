@@ -145,16 +145,21 @@ It also allows you to reinterpret fields as being of a different type. In partic
    foo                       3 baz                       2
    three                     4 abacus                    0
 
-You can also specify ranges of rows to output using the -r option, using a Matlab-like range notation start:step:stop. The start specifies the first row to output, step specifies how many rows to advance between rows to output, and stop specifies the largest row to be output. The start and stop offsets are 1-based with positive values counting from the first record and negative values counting from the last records. Abbreviated versions of the range notation include
+You can also specify ranges of rows to output using the -r option, using a Matlab-like range notation start:step:stop. The start specifies the first row to output, step specifies how many rows to advance between rows to output, and stop specifies the largest row to be output. The start and stop offsets are 1-based with positive values counting from the first record and negative values counting from the last records. Abbreviated versions of the range notation include all of the following with defaults as indicated:
 
-   notation         defaults
-  -------------------------------------------
-   :                start=1, step=1, stop=-1
-   :stop            start=1, step=1
-   start:           stop=-1, step=1
-   stop:start       step=1
-   :step:stop       start=1
-   start:step:      stop=-1
+   notation       start   step   stop
+  ------------------------------------
+   :                  1      1     -1
+   :stop              1      1
+   start:                    1     -1
+   start:stop                1
+   :+step:            1            -1
+   start:+step:                    -1
+   :+step:stop        1
+   :-step:           -1             1
+   start:-step:                     1
+   :-step:stop       -1
+  ------------------------------------
 
 If you want to output the first 2 records, for example, you can do this:
 
