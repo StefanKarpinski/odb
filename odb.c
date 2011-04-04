@@ -302,6 +302,8 @@ typedef enum {
     UNSPECIFIED
 } field_type_t;
 
+#define floatlike(t) ((t)==FLOAT||(t)==TIMESTAMP||(t)==DATE)
+
 char *typestrs[] = {
     "int",
     "float",
@@ -539,10 +541,10 @@ int lt_records(void *d, size_t a, size_t b) {
         int r = j < 0;
         j = abs(j)-1;
         if (data(a,j) != data(b,j)) {
-            if (h.field_specs[j].type != FLOAT)                 return r^(data(a,j) < data(b,j));
+            if (!floatlike(h.field_specs[j].type)) return r^(data(a,j) < data(b,j));
             if (isnan(dbl(data(a,j))) && isnan(dbl(data(b,j)))) continue;
-            if (isnan(dbl(data(a,j))))                          return r^1;
-            if (isnan(dbl(data(b,j))))                          return r^0;
+            if (isnan(dbl(data(a,j)))) return r^1;
+            if (isnan(dbl(data(b,j)))) return r^0;
             return r^(dbl(data(a,j)) < dbl(data(b,j)));
         }
     }
