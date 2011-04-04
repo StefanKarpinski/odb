@@ -530,15 +530,21 @@ static header_t h;
 int sort_n, *sort_order;
 
 #define data(j,k) data[(j)*h.field_count+(k)]
+#define dbl(v) reinterpret(double,v)
 
 int lt_records(void *d, size_t a, size_t b) {
     long long *data = (long long*) d;
     for (int i = 0; i < sort_n; i++) {
         int j = sort_order[i];
-        int s = j < 0 ? -1 : 1;
-        j = s*j - 1;
-        if (data(a,j) != data(b,j))
-            return s*data(a,j) < s*data(b,j) ? 1 : 0;
+        int r = j < 0;
+        j = abs(j)-1;
+        if (data(a,j) != data(b,j)) {
+            if (h.field_specs[j].type != FLOAT)                 return r^(data(a,j) < data(b,j));
+            if (isnan(dbl(data(a,j))) && isnan(dbl(data(b,j)))) continue;
+            if (isnan(dbl(data(a,j))))                          return r^1;
+            if (isnan(dbl(data(b,j))))                          return r^0;
+            return r^(dbl(data(a,j)) < dbl(data(b,j)));
+        }
     }
     return 0;
 }
