@@ -225,8 +225,3 @@ OTHER
 =====
 
 The paste command horizontally concatenates its argument data just like the UNIX paste command does. It's arguments do not have to have compatible schemas, but they should have the same number of rows. The join command (not yet implemented) does an inner join on multiple inputs by the fields given with the -f option.
-
-Sponsorship
-===========
-
-This code is sponsored by Etsy, Inc. my employer. We're not using it in production, but it's a useful tool for dealing with large data sets. The software is provided AS-IS with no implied or explicit warranty. Etsy is just cool enough to let me write code like this, use it for work purposes, and open source it.
